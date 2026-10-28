@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
+const String vietmapApiKey = 'xxx';
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const TeaNaviApp());
@@ -69,7 +71,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool isConnected = false;
 
   final String serviceUuid = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-  final String rxUuid = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; // App ghi vào đây
+  final String rxUuid =
+      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; // App ghi vào đây
 
   // GPS & Map State
   final MapController mapController = MapController();
@@ -118,30 +121,34 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
 
     if (!mounted) return;
+    // Lấy chính xác 100% tọa độ GPS thực tế của thiết bị
+    LatLng actualPos = LatLng(pos.latitude, pos.longitude);
+
     setState(() {
-      currentPosition = LatLng(pos.latitude, pos.longitude);
-      currentSpeed = max(0, pos.speed * 3.6); // Chuyển m/s sang km/h
+      currentPosition = actualPos;
+      currentSpeed = max(0, pos.speed * 3.6);
     });
 
     mapController.move(currentPosition!, 16);
 
-    // Lắng nghe di chuyển thời gian thực
-    positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 3, // Cập nhật mỗi 3 mét
-      ),
-    ).listen((Position newPos) {
-      if (!mounted) return;
-      setState(() {
-        currentPosition = LatLng(newPos.latitude, newPos.longitude);
-        currentSpeed = max(0, newPos.speed * 3.6);
-      });
+    // Lắng nghe di chuyển thời gian thực từ GPS thiết bị
+    positionStream =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 2, // Cập nhật mỗi 2 mét
+          ),
+        ).listen((Position newPos) {
+          if (!mounted) return;
+          setState(() {
+            currentPosition = LatLng(newPos.latitude, newPos.longitude);
+            currentSpeed = max(0, newPos.speed * 3.6);
+          });
 
-      if (isNavigating && navSteps.isNotEmpty) {
-        processNavigationUpdate();
-      }
-    });
+          if (isNavigating && navSteps.isNotEmpty) {
+            processNavigationUpdate();
+          }
+        });
   }
 
   // ==========================================
@@ -153,10 +160,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     try {
       // 1. Kiểm tra Bluetooth có đang bật không
-      if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
+      if (await FlutterBluePlus.adapterState.first !=
+          BluetoothAdapterState.on) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Vui lòng bật Bluetooth trên điện thoại!')),
+          const SnackBar(
+            content: Text('Vui lòng bật Bluetooth trên điện thoại!'),
+          ),
         );
         setState(() => isScanning = false);
         return;
@@ -165,7 +175,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
       // 2. Lắng nghe kết quả quét trước khi bắt đầu startScan
       var subscription = FlutterBluePlus.scanResults.listen((results) {
         for (ScanResult r in results) {
-          String name = r.device.platformName.isNotEmpty ? r.device.platformName : r.advertisementData.advName;
+          String name = r.device.platformName.isNotEmpty
+              ? r.device.platformName
+              : r.advertisementData.advName;
           debugPrint(">> Tim thay BLE: '$name' [${r.device.remoteId}]");
           if (name == "TeaNavi_HUD" || name.contains("TeaNavi")) {
             FlutterBluePlus.stopScan();
@@ -196,14 +208,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
 
       List<BluetoothService> services = await device.discoverServices();
+      debugPrint('>> [BLE] Tim thay ${services.length} services:');
       for (var s in services) {
-        if (s.uuid.toString().toUpperCase() == serviceUuid) {
+        debugPrint('>>   Service UUID: ');
+        if (s.uuid.toString().toUpperCase().contains('6E400001')) {
+          debugPrint('>> [BLE] Da tim thay NUS Service!');
           for (var c in s.characteristics) {
-            if (c.uuid.toString().toUpperCase() == rxUuid) {
+            debugPrint('>>     Char UUID: ');
+            if (c.uuid.toString().toUpperCase().contains('6E400002')) {
               rxCharacteristic = c;
+              debugPrint(
+                '>> [BLE] DA TIM THAY RX Characteristic! SAN SANG GUI.',
+              );
             }
           }
         }
+      }
+      if (rxCharacteristic == null) {
+        debugPrint('>> [BLE CANH BAO] KHONG tim thay RX Characteristic!');
       }
 
       device.connectionState.listen((state) {
@@ -246,11 +268,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
     required int exitNum,
     required String streetName,
   }) {
-    if (rxCharacteristic == null || !isConnected) return;
-
+    if (rxCharacteristic == null || !isConnected) {
+      debugPrint(
+        '>> [BLE] KHONG GUI duoc - rxChar=${rxCharacteristic != null}, connected=$isConnected',
+      );
+      return;
+    }
     // Chuẩn hóa không dấu cho tên đường gửi ESP32
     String safeStreet = removeDiacritics(streetName).toUpperCase();
-    String packet = "$direction,$distanceMeters,$speedKmH,$speedLimit,$exitNum,$safeStreet\n";
+    String packet =
+        "$direction,$distanceMeters,$speedKmH,$speedLimit,$exitNum,$safeStreet\n";
+    debugPrint(">> [BLE GUI]: $packet");
 
     try {
       rxCharacteristic!.write(utf8.encode(packet), withoutResponse: true);
@@ -260,12 +288,84 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   String removeDiacritics(String str) {
-    const withDia = 'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ';
-    const withoutDia = 'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyydAAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD';
+    const withDia =
+        'àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđÀÁẠẢÃÂẦẤẬẨẪĂẰẮẶẲẴÈÉẸẺẼÊỀẾỆỂỄÌÍỊỈĨÒÓỌỎÕÔỒỐỘỔỖƠỜỚỢỞỠÙÚỤỦŨƯỪỨỰỬỮỲÝỴỶỸĐ';
+    const withoutDia =
+        'aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyydAAAAAAAAAAAAAAAAAEEEEEEEEEEEIIIIIOOOOOOOOOOOOOOOOOUUUUUUUUUUUYYYYYD';
     for (int i = 0; i < withDia.length; i++) {
       str = str.replaceAll(withDia[i], withoutDia[i]);
     }
     return str;
+  }
+
+  // Dẫn đường trực tiếp tới tọa độ LatLng
+  Future<void> routeToDestination(LatLng destination, String placeName) async {
+    if (currentPosition == null) return;
+
+    final osrmUrl = Uri.parse(
+      'https://routing.openstreetmap.de/routed-car/route/v1/driving/'
+      '${currentPosition!.longitude},${currentPosition!.latitude};'
+      '${destination.longitude},${destination.latitude}'
+      '?overview=full&steps=true&geometries=geojson',
+    );
+
+    debugPrint(
+      ">> Dang tim duong den: $placeName [${destination.latitude}, ${destination.longitude}]",
+    );
+    debugPrint(">> URL: $osrmUrl");
+
+    try {
+      final osrmRes = await http.get(osrmUrl);
+      debugPrint(">> OSRM Response Status: ${osrmRes.statusCode}");
+      if (osrmRes.statusCode != 200) {
+        debugPrint(">> OSRM Error Body: ${osrmRes.body}");
+        return;
+      }
+      final osrmData = json.decode(osrmRes.body);
+
+      if (osrmData['routes'] == null || osrmData['routes'].isEmpty) {
+        debugPrint(">> OSRM khong tim thay tuyen duong hop le!");
+        return;
+      }
+
+      final route = osrmData['routes'][0];
+      final geometry = route['geometry']['coordinates'] as List;
+
+      if (!mounted) return;
+      setState(() {
+        routePoints = geometry.map((pt) => LatLng(pt[1], pt[0])).toList();
+        navSteps = parseOsrmSteps(route['legs'][0]['steps']);
+        currentStepIndex = 0;
+        isNavigating = true;
+      });
+
+      debugPrint(
+        ">> Da ve tuyen duong thanh cong voi ${routePoints.length} diem toa do va ${navSteps.length} buoc re!",
+      );
+
+      // Bắt đầu chu kỳ đồng bộ dữ liệu mỗi 800ms sang ESP32
+      syncTimer?.cancel();
+      syncTimer = Timer.periodic(const Duration(milliseconds: 800), (t) {
+        if (isNavigating && navSteps.isNotEmpty) {
+          processNavigationUpdate();
+        }
+      });
+
+      // Gui ngay goi tin dau tien sang ESP32
+      processNavigationUpdate();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Bắt đầu lộ trình: $placeName (${(route['distance'] / 1000).toStringAsFixed(1)} km)',
+          ),
+          backgroundColor: const Color(0xFF00E5FF).withValues(alpha: 0.9),
+        ),
+      );
+    } catch (e) {
+      debugPrint("Lỗi OSRM: $e");
+    }
   }
 
   // ==========================================
@@ -274,16 +374,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Future<void> searchAndRoute(String query) async {
     if (currentPosition == null) return;
 
-    // 1. Tìm tọa độ điểm đến qua Nominatim OpenStreetMap (Miễn phí)
+    // 1. Tìm tọa độ điểm đến qua Photon Komoot API (Nhanh gấp 10 lần, tương thích hoàn toàn DNS máy ảo & điện thoại)
+    String q = query.trim();
+    if (q.toLowerCase() == "iuh") {
+      q = "Đại học Công Nghiệp TP.HCM";
+    }
+
     final searchUrl = Uri.parse(
-      'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=1',
+      'https://photon.komoot.io/api/?q=${Uri.encodeComponent(q)}&limit=1&lat=${currentPosition!.latitude}&lon=${currentPosition!.longitude}',
     );
 
     try {
-      final res = await http.get(searchUrl, headers: {'User-Agent': 'TeaNaviCompanion/1.0'});
+      final res = await http.get(searchUrl);
       if (res.statusCode != 200) return;
-      final data = json.decode(res.body);
-      if (data.isEmpty) {
+      final data = json.decode(utf8.decode(res.bodyBytes));
+      final features = data['features'] as List;
+      if (features.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Không tìm thấy địa điểm!')),
@@ -291,9 +397,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
         return;
       }
 
-      double destLat = double.parse(data[0]['lat']);
-      double destLon = double.parse(data[0]['lon']);
+      final coords = features[0]['geometry']['coordinates'];
+      double destLon = (coords[0] as num).toDouble();
+      double destLat = (coords[1] as num).toDouble();
       LatLng destination = LatLng(destLat, destLon);
+      String $placeName = features[0]['properties']['name'] ?? q;
 
       // 2. Lấy lộ trình Turn-by-Turn từ OSRM (Miễn phí)
       final osrmUrl = Uri.parse(
@@ -331,7 +439,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bắt đầu lộ trình: ${data[0]['display_name']}')),
+        SnackBar(content: Text('Bắt đầu lộ trình: ${$placeName}')),
       );
     } catch (e) {
       debugPrint("Lỗi OSRM: $e");
@@ -339,6 +447,47 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   // Ánh xạ Maneuver của OSRM sang 12 Enum NavDirection của TeaNavi
+
+  // OSRM maneuver type+modifier -> ESP32 NavDirection enum (0-11)
+  // 0=Straight 1=SlightR 2=TurnR 3=SharpR 4=SlightL 5=TurnL 6=SharpL
+  // 7=UTurnL 8=UTurnR 9=ForkRamp 10=Roundabout 11=Destination
+  int _osrmToNavDir(String type, String modifier) {
+    if (type == 'arrive') return 11;
+    if (type == 'roundabout' || type == 'rotary' || type == 'roundabout turn')
+      return 10;
+    if (type == 'fork' || type == 'on ramp' || type == 'off ramp') return 9;
+    if (modifier == 'uturn') return 7;
+
+    // Buoc xuat phat / tiep tuc / ten moi -> theo modifier
+    if (type == 'depart' ||
+        type == 'continue' ||
+        type == 'new name' ||
+        type == 'notification' ||
+        type == 'use lane') {
+      if (modifier == 'left') return 5;
+      if (modifier == 'slight left') return 4;
+      if (modifier == 'right') return 2;
+      if (modifier == 'slight right') return 1;
+      return 0;
+    }
+
+    // Cuoi duong / merge
+    if (type == 'end of road' || type == 'merge') {
+      if (modifier == 'right' || modifier == 'slight right') return 2;
+      if (modifier == 'left' || modifier == 'slight left') return 5;
+      return 0;
+    }
+
+    // Turn thong thuong
+    if (modifier == 'slight right') return 1;
+    if (modifier == 'right') return 2;
+    if (modifier == 'sharp right') return 3;
+    if (modifier == 'slight left') return 4;
+    if (modifier == 'left') return 5;
+    if (modifier == 'sharp left') return 6;
+    return 0; // mac dinh di thang
+  }
+
   List<NavigationStep> parseOsrmSteps(List stepsJson) {
     List<NavigationStep> steps = [];
     for (var s in stepsJson) {
@@ -347,43 +496,24 @@ class _NavigationScreenState extends State<NavigationScreen> {
       String modifier = maneuver['modifier'] ?? '';
       int exitNum = maneuver['exit'] ?? 1;
 
-      int dirEnum = 0; // Default NAV_STRAIGHT
-      if (type == 'turn') {
-        if (modifier == 'slight right') {
-          dirEnum = 1;
-        } else if (modifier == 'right') {
-          dirEnum = 2;
-        } else if (modifier == 'sharp right') {
-          dirEnum = 3;
-        } else if (modifier == 'slight left') {
-          dirEnum = 4;
-        } else if (modifier == 'left') {
-          dirEnum = 5;
-        } else if (modifier == 'sharp left') {
-          dirEnum = 6;
-        } else if (modifier == 'uturn') {
-          dirEnum = 7;
-        }
-      } else if (type == 'roundabout' || type == 'rotary') {
-        dirEnum = 10;
-      } else if (type == 'fork' || type == 'on ramp') {
-        dirEnum = 9;
-      } else if (type == 'arrive') {
-        dirEnum = 11;
-      }
+      int dirEnum = _osrmToNavDir(type, modifier);
 
       double dist = (s['distance'] as num).toDouble();
-      String name = (s['name'] == null || s['name'].toString().isEmpty) ? "TIEP TUC DI THANG" : s['name'];
+      String name = (s['name'] == null || s['name'].toString().isEmpty)
+          ? "TIEP TUC DI THANG"
+          : s['name'];
       var loc = maneuver['location'];
 
-      steps.add(NavigationStep(
-        direction: dirEnum,
-        distance: dist,
-        streetName: name,
-        instruction: s['maneuver']['type'] ?? '',
-        location: LatLng(loc[1], loc[0]),
-        exitNumber: exitNum,
-      ));
+      steps.add(
+        NavigationStep(
+          direction: dirEnum,
+          distance: dist,
+          streetName: name,
+          instruction: s['maneuver']['type'] ?? '',
+          location: LatLng(loc[1], loc[0]),
+          exitNumber: exitNum,
+        ),
+      );
     }
     return steps;
   }
@@ -448,13 +578,17 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 size: 18,
               ),
               label: Text(
-                isConnected ? 'TeaNavi' : (isScanning ? 'Đang quét...' : 'Kết nối HUD'),
+                isConnected
+                    ? 'TeaNavi'
+                    : (isScanning ? 'Đang quét...' : 'Kết nối HUD'),
                 style: TextStyle(
                   color: isConnected ? Colors.greenAccent : Colors.white70,
                   fontSize: 12,
                 ),
               ),
-              backgroundColor: isConnected ? Colors.green.withValues(alpha: 0.15) : const Color(0xFF222638),
+              backgroundColor: isConnected
+                  ? Colors.green.withValues(alpha: 0.15)
+                  : const Color(0xFF222638),
               onPressed: isConnected ? disconnectBle : startScanBle,
             ),
           ),
@@ -466,14 +600,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
           FlutterMap(
             mapController: mapController,
             options: MapOptions(
-              initialCenter: currentPosition ?? const LatLng(10.7769, 106.7009), // TP.HCM mặc định
+              initialCenter: currentPosition ?? const LatLng(10.8220, 106.6875),
               initialZoom: 15.0,
+              onTap: (tapPosition, point) {
+                // Nhấn trực tiếp lên bản đồ để chọn điểm đến và dẫn đường tức thì!
+                searchController.text =
+                    "${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}";
+                routeToDestination(point, "Điểm đã chọn trên bản đồ");
+              },
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}@2x.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
+                urlTemplate:
+                    'https://maps.vietmap.vn/api/tm/{z}/{x}/{y}@2x.png?apikey=$vietmapApiKey',
                 userAgentPackageName: 'com.teaverse.teanavi_map',
+                fallbackUrl:
+                    'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
               ),
               if (routePoints.isNotEmpty)
                 PolylineLayer(
@@ -513,7 +655,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
               decoration: BoxDecoration(
                 color: const Color(0xFF1A1D2E).withValues(alpha: 0.92),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF00E5FF).withValues(alpha: 0.4)),
+                border: Border.all(
+                  color: const Color(0xFF00E5FF).withValues(alpha: 0.4),
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.3),
@@ -522,20 +666,43 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   ),
                 ],
               ),
-              child: TextField(
-                controller: searchController,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Nhập điểm đến (VD: Chợ Bến Thành)...',
-                  hintStyle: const TextStyle(color: Colors.white54),
-                  border: InputBorder.none,
-                  icon: const Icon(Icons.search, color: Color(0xFF00E5FF)),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.arrow_forward, color: Color(0xFF00E5FF)),
-                    onPressed: () => searchAndRoute(searchController.text),
+              child: Row(
+                children: [
+                  const Icon(Icons.search, color: Color(0xFF00E5FF)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: searchController,
+                      style: const TextStyle(color: Colors.white),
+                      textInputAction: TextInputAction.search,
+                      decoration: const InputDecoration(
+                        hintText: 'Nhập điểm đến (VD: Chợ Bến Thành, IUH)...',
+                        hintStyle: TextStyle(color: Colors.white54),
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (text) => searchAndRoute(text),
+                    ),
                   ),
-                ),
-                onSubmitted: searchAndRoute,
+                  InkWell(
+                    onTap: () {
+                      debugPrint(">> Nguoi dung BAM nut tim kiem!");
+                      searchAndRoute(searchController.text);
+                    },
+                    borderRadius: BorderRadius.circular(20),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF00E5FF),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.arrow_forward,
+                        color: Colors.black,
+                        size: 20,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -560,7 +727,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('TỐC ĐỘ GPS', style: TextStyle(color: Colors.white54, fontSize: 11)),
+                      const Text(
+                        'TỐC ĐỘ GPS',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
                       Text(
                         '${currentSpeed.round()}',
                         style: const TextStyle(
@@ -569,7 +739,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const Text('KM/H', style: TextStyle(color: Colors.white38, fontSize: 10)),
+                      const Text(
+                        'KM/H',
+                        style: TextStyle(color: Colors.white38, fontSize: 10),
+                      ),
                     ],
                   ),
 
@@ -595,7 +768,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                             const SizedBox(height: 4),
                             Text(
                               'Đang phát Bluetooth sang HUD ESP32...',
-                              style: TextStyle(color: Colors.greenAccent.shade200, fontSize: 11),
+                              style: TextStyle(
+                                color: Colors.greenAccent.shade200,
+                                fontSize: 11,
+                              ),
                             ),
                           ],
                         ),
@@ -617,7 +793,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     style: IconButton.styleFrom(
                       backgroundColor: const Color(0xFF222638),
                     ),
-                    icon: const Icon(Icons.my_location, color: Color(0xFF00E5FF)),
+                    icon: const Icon(
+                      Icons.my_location,
+                      color: Color(0xFF00E5FF),
+                    ),
                     onPressed: () {
                       if (currentPosition != null) {
                         mapController.move(currentPosition!, 16);
@@ -633,8 +812,3 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 }
-
-
-
-
-
