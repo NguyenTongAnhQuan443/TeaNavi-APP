@@ -138,6 +138,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   bool isSelectingOrigin = false;
   bool showRoutePlanPanel = false;
+  bool isRouteStepsExpanded = false; // Bật tắt danh sách toàn bộ các ngã rẽ chi tiết
 
   // Danh sách gợi ý tìm kiếm (Autocomplete Suggestions)
   List<SearchResultPlace> searchSuggestions = [];
@@ -154,12 +155,32 @@ class _NavigationScreenState extends State<NavigationScreen> {
   Timer? syncTimer;
 
   final List<QuickPlaceItem> quickPlaces = const [
-    QuickPlaceItem(title: 'Cây xăng', icon: Icons.local_gas_station_rounded, query: 'cây xăng gần nhất'),
-    QuickPlaceItem(title: 'Quán ăn', icon: Icons.restaurant_rounded, query: 'quán ăn gần đây'),
-    QuickPlaceItem(title: 'Bãi xe', icon: Icons.local_parking_rounded, query: 'bãi đỗ xe'),
-    QuickPlaceItem(title: 'Cà phê', icon: Icons.local_cafe_rounded, query: 'quán cà phê gần đây'),
+    QuickPlaceItem(
+      title: 'Cây xăng',
+      icon: Icons.local_gas_station_rounded,
+      query: 'cây xăng gần nhất',
+    ),
+    QuickPlaceItem(
+      title: 'Quán ăn',
+      icon: Icons.restaurant_rounded,
+      query: 'quán ăn gần đây',
+    ),
+    QuickPlaceItem(
+      title: 'Bãi xe',
+      icon: Icons.local_parking_rounded,
+      query: 'bãi đỗ xe',
+    ),
+    QuickPlaceItem(
+      title: 'Cà phê',
+      icon: Icons.local_cafe_rounded,
+      query: 'quán cà phê gần đây',
+    ),
     QuickPlaceItem(title: 'Nhà', icon: Icons.home_rounded, query: 'Nhà'),
-    QuickPlaceItem(title: 'Công ty', icon: Icons.work_rounded, query: 'Công ty'),
+    QuickPlaceItem(
+      title: 'Công ty',
+      icon: Icons.work_rounded,
+      query: 'Công ty',
+    ),
   ];
 
   @override
@@ -209,25 +230,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     mapController.move(currentPosition!, 16);
 
-    positionStream = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.bestForNavigation,
-        distanceFilter: 2,
-      ),
-    ).listen((Position newPos) {
-      if (!mounted) return;
-      setState(() {
-        currentPosition = LatLng(newPos.latitude, newPos.longitude);
-        currentSpeed = max(0, newPos.speed * 3.6);
-        if (newPos.heading > 0) {
-          currentHeading = newPos.heading;
-        }
-      });
+    positionStream =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.bestForNavigation,
+            distanceFilter: 2,
+          ),
+        ).listen((Position newPos) {
+          if (!mounted) return;
+          setState(() {
+            currentPosition = LatLng(newPos.latitude, newPos.longitude);
+            currentSpeed = max(0, newPos.speed * 3.6);
+            if (newPos.heading > 0) {
+              currentHeading = newPos.heading;
+            }
+          });
 
-      if (isNavigating && navSteps.isNotEmpty) {
-        processNavigationUpdate();
-      }
-    });
+          if (isNavigating && navSteps.isNotEmpty) {
+            processNavigationUpdate();
+          }
+        });
   }
 
   // ==========================================
@@ -238,7 +260,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() => isScanning = true);
 
     try {
-      if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
+      if (await FlutterBluePlus.adapterState.first !=
+          BluetoothAdapterState.on) {
         if (!mounted) return;
         _showToast('Vui lòng bật Bluetooth trên điện thoại!');
         setState(() => isScanning = false);
@@ -389,7 +412,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() => isSearchingSuggestions = true);
 
     LatLng anchor = currentPosition ?? const LatLng(10.8220, 106.6875);
-    if (anchor.latitude > 15 || anchor.latitude < 8 || anchor.longitude < 100 || anchor.longitude > 110) {
+    if (anchor.latitude > 15 ||
+        anchor.latitude < 8 ||
+        anchor.longitude < 100 ||
+        anchor.longitude > 110) {
       anchor = const LatLng(10.8220, 106.6875);
     }
 
@@ -414,16 +440,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
           if (props['street'] != null) subParts.add(props['street']);
           if (props['district'] != null) subParts.add(props['district']);
           if (props['city'] != null) subParts.add(props['city']);
-          if (props['state'] != null && props['state'] != props['city']) subParts.add(props['state']);
+          if (props['state'] != null && props['state'] != props['city']) {
+            subParts.add(props['state']);
+          }
           if (props['country'] != null) subParts.add(props['country']);
 
-          String subtitle = subParts.isNotEmpty ? subParts.join(', ') : 'Địa điểm trên bản đồ';
+          String subtitle = subParts.isNotEmpty
+              ? subParts.join(', ')
+              : 'Địa điểm trên bản đồ';
 
           results.add(
             SearchResultPlace(
               title: name,
               subtitle: subtitle,
-              location: LatLng((geom[1] as num).toDouble(), (geom[0] as num).toDouble()),
+              location: LatLng(
+                (geom[1] as num).toDouble(),
+                (geom[0] as num).toDouble(),
+              ),
             ),
           );
         }
@@ -438,10 +471,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
         final nomUrl = Uri.parse(
           'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=6&countrycodes=vn',
         );
-        final nomRes = await http.get(
-          nomUrl,
-          headers: {'User-Agent': 'TeaNaviMapApp/1.0'},
-        ).timeout(const Duration(seconds: 4));
+        final nomRes = await http
+            .get(nomUrl, headers: {'User-Agent': 'TeaNaviMapApp/1.0'})
+            .timeout(const Duration(seconds: 4));
 
         if (nomRes.statusCode == 200) {
           final nomData = json.decode(utf8.decode(nomRes.bodyBytes)) as List;
@@ -454,8 +486,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
             if (lat != 0 && lon != 0) {
               // Tránh trùng lặp
               bool exists = results.any(
-                (r) => (r.location.latitude - lat).abs() < 0.001 &&
-                       (r.location.longitude - lon).abs() < 0.001,
+                (r) =>
+                    (r.location.latitude - lat).abs() < 0.001 &&
+                    (r.location.longitude - lon).abs() < 0.001,
               );
               if (!exists) {
                 results.add(
@@ -493,7 +526,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
       mapController.move(place.location, 16);
       if (destPoint != null) {
-        calculateRoute(from: originPoint, to: destPoint, destTitle: destinationName);
+        calculateRoute(
+          from: originPoint,
+          to: destPoint,
+          destTitle: destinationName,
+        );
       }
     } else {
       setState(() {
@@ -502,14 +539,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
         destController.text = place.title;
       });
       mapController.move(place.location, 16);
-      calculateRoute(from: originPoint ?? currentPosition, to: place.location, destTitle: place.title);
+      calculateRoute(
+        from: originPoint ?? currentPosition,
+        to: place.location,
+        destTitle: place.title,
+      );
     }
   }
 
   // ==========================================
   // OSRM ROUTE (ĐIỂM ĐI -> ĐIỂM ĐẾN)
   // ==========================================
-  Future<void> calculateRoute({LatLng? from, LatLng? to, String? destTitle}) async {
+  Future<void> calculateRoute({
+    LatLng? from,
+    LatLng? to,
+    String? destTitle,
+  }) async {
     final start = from ?? originPoint ?? currentPosition;
     final end = to ?? destPoint;
 
@@ -579,7 +624,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
 
       processNavigationUpdate();
-      _showToast('Bắt đầu lộ trình: ${destinationName.isNotEmpty ? destinationName : 'Điểm đến'} (${totalRouteDistanceKm.toStringAsFixed(1)} km)');
+      _showToast(
+        'Bắt đầu lộ trình: ${destinationName.isNotEmpty ? destinationName : 'Điểm đến'} (${totalRouteDistanceKm.toStringAsFixed(1)} km)',
+      );
     } catch (e) {
       if (mounted) setState(() => isLoadingRoute = false);
       debugPrint("Lỗi OSRM: $e");
@@ -601,7 +648,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
     });
 
     if (originPoint != null && destPoint != null) {
-      calculateRoute(from: originPoint, to: destPoint, destTitle: destinationName);
+      calculateRoute(
+        from: originPoint,
+        to: destPoint,
+        destTitle: destinationName,
+      );
     }
   }
 
@@ -688,11 +739,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
     NavigationStep step = navSteps[currentStepIndex];
 
     // Sử dụng refPosition phù hợp khi chọn điểm đi tùy chọn hay GPS máy
-    final LatLng refPosition = (originPoint != null && originPoint != currentPosition)
+    final LatLng refPosition =
+        (originPoint != null && originPoint != currentPosition)
         ? originPoint!
         : (currentPosition ?? step.location);
 
-    double distToManeuver = (originPoint != null && originPoint != currentPosition)
+    double distToManeuver =
+        (originPoint != null && originPoint != currentPosition)
         ? step.distance
         : Geolocator.distanceBetween(
             refPosition.latitude,
@@ -808,7 +861,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 urlTemplate: isDark
                     ? 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png'
                     : 'https://mt{s}.google.com/vt/lyrs=m&hl=vi&x={x}&y={y}&z={z}',
-                subdomains: isDark ? const ['a', 'b', 'c', 'd'] : const ['0', '1', '2', '3'],
+                subdomains: isDark
+                    ? const ['a', 'b', 'c', 'd']
+                    : const ['0', '1', '2', '3'],
                 userAgentPackageName: 'com.teaverse.teanavi_map',
                 fallbackUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
@@ -909,12 +964,13 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ],
           ),
 
-          // 2. Top Header & Thanh tìm kiếm
-          Positioned(
-            top: topPadding + 10,
-            left: 16,
-            right: 16,
-            child: Column(
+          // 2. Top Header & Thanh tìm kiếm (Khi KHÔNG trong chế độ dẫn đường)
+          if (!isNavigating)
+            Positioned(
+              top: topPadding + 10,
+              left: 16,
+              right: 16,
+              child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Header Capsule
@@ -1044,13 +1100,19 @@ class _NavigationScreenState extends State<NavigationScreen> {
                             decoration: BoxDecoration(
                               color: isConnected
                                   ? (isDark
-                                      ? const Color(0xFF30D158).withValues(alpha: 0.2)
-                                      : const Color(0xFF34C759).withValues(alpha: 0.15))
+                                        ? const Color(
+                                            0xFF30D158,
+                                          ).withValues(alpha: 0.2)
+                                        : const Color(
+                                            0xFF34C759,
+                                          ).withValues(alpha: 0.15))
                                   : glassBg,
                               borderRadius: BorderRadius.circular(24),
                               border: Border.all(
                                 color: isConnected
-                                    ? const Color(0xFF34C759).withValues(alpha: 0.5)
+                                    ? const Color(
+                                        0xFF34C759,
+                                      ).withValues(alpha: 0.5)
                                     : glassBorder,
                               ),
                             ),
@@ -1175,7 +1237,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                   leading: Container(
                                     padding: const EdgeInsets.all(8),
                                     decoration: BoxDecoration(
-                                      color: primaryColor.withValues(alpha: 0.12),
+                                      color: primaryColor.withValues(
+                                        alpha: 0.12,
+                                      ),
                                       shape: BoxShape.circle,
                                     ),
                                     child: Icon(
@@ -1231,7 +1295,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                             child: InkWell(
                               onTap: () {
                                 destController.text = item.query;
-                                onSearchTextChanged(item.query, forOrigin: false);
+                                onSearchTextChanged(
+                                  item.query,
+                                  forOrigin: false,
+                                );
                               },
                               borderRadius: BorderRadius.circular(18),
                               child: Container(
@@ -1245,7 +1312,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                   border: Border.all(color: glassBorder),
                                   boxShadow: [
                                     BoxShadow(
-                                      color: Colors.black.withValues(alpha: 0.04),
+                                      color: Colors.black.withValues(
+                                        alpha: 0.04,
+                                      ),
                                       blurRadius: 8,
                                       offset: const Offset(0, 2),
                                     ),
@@ -1281,10 +1350,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ),
 
+          // 2B. BANNER CHỈ ĐƯỜNG TRÊN ĐỈNH KHI ĐANG DẪN ĐƯỜNG (APPLE / GOOGLE MAPS STYLE)
+          if (isNavigating && navSteps.isNotEmpty)
+            Positioned(
+              top: topPadding + 10,
+              left: 16,
+              right: 16,
+              child: _buildTopNavigationBanner(
+                textColor: textColor,
+                secondaryTextColor: secondaryTextColor,
+                primaryColor: primaryColor,
+                glassBg: glassBg,
+                glassBorder: glassBorder,
+                isDark: isDark,
+              ),
+            ),
+
           // 4. Right Floating Map Controls
           Positioned(
             right: 16,
-            bottom: isNavigating ? 190 : 130,
+            bottom: isNavigating ? (isRouteStepsExpanded ? 340 : 200) : 130,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1400,10 +1485,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
             textInputAction: TextInputAction.search,
             decoration: InputDecoration(
               hintText: 'Tìm điểm đến, chợ, trường học...',
-              hintStyle: TextStyle(
-                color: secondaryTextColor,
-                fontSize: 14,
-              ),
+              hintStyle: TextStyle(color: secondaryTextColor, fontSize: 14),
               border: InputBorder.none,
               isDense: true,
             ),
@@ -1498,10 +1580,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   color: isSelectingOrigin
                       ? const Color(0xFF34C759)
                       : const Color(0xFF34C759).withValues(alpha: 0.2),
-                  border: Border.all(
-                    color: const Color(0xFF34C759),
-                    width: 2,
-                  ),
+                  border: Border.all(color: const Color(0xFF34C759), width: 2),
                 ),
                 child: Center(
                   child: Container(
@@ -1637,7 +1716,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   border: InputBorder.none,
                   isDense: true,
                 ),
-                onChanged: (text) => onSearchTextChanged(text, forOrigin: false),
+                onChanged: (text) =>
+                    onSearchTextChanged(text, forOrigin: false),
                 onSubmitted: (text) => fetchLocationSuggestions(text),
               ),
             ),
@@ -1646,7 +1726,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 if (searchSuggestions.isNotEmpty) {
                   selectSearchResult(searchSuggestions.first);
                 } else if (destPoint != null) {
-                  calculateRoute(from: originPoint ?? currentPosition, to: destPoint);
+                  calculateRoute(
+                    from: originPoint ?? currentPosition,
+                    to: destPoint,
+                  );
                 } else {
                   fetchLocationSuggestions(destController.text);
                 }
@@ -1797,7 +1880,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  color: isConnected ? const Color(0xFF34C759) : secondaryTextColor,
+                  color: isConnected
+                      ? const Color(0xFF34C759)
+                      : secondaryTextColor,
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                 ),
@@ -1809,165 +1894,312 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
+  // Banner chỉ đường nổi trên đỉnh (Apple Maps / Google Maps Dark Cyber HUD Style)
+  Widget _buildTopNavigationBanner({
+    required Color textColor,
+    required Color secondaryTextColor,
+    required Color primaryColor,
+    required Color glassBg,
+    required Color glassBorder,
+    required bool isDark,
+  }) {
+    final currentStep = navSteps[currentStepIndex];
+    final LatLng refPosition =
+        (originPoint != null && originPoint != currentPosition)
+            ? originPoint!
+            : (currentPosition ?? currentStep.location);
+
+    double distToManeuver =
+        (originPoint != null && originPoint != currentPosition)
+            ? currentStep.distance
+            : Geolocator.distanceBetween(
+                refPosition.latitude,
+                refPosition.longitude,
+                currentStep.location.latitude,
+                currentStep.location.longitude,
+              );
+
+    // Bước rẽ kế tiếp (Next step preview)
+    NavigationStep? nextStep;
+    if (currentStepIndex + 1 < navSteps.length) {
+      nextStep = navSteps[currentStepIndex + 1];
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: isDark
+                ? const Color(0xFF131622).withValues(alpha: 0.94)
+                : const Color(0xFF1C1C1E).withValues(alpha: 0.92),
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: isDark
+                  ? primaryColor.withValues(alpha: 0.35)
+                  : Colors.white.withValues(alpha: 0.15),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 20,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Icon ngã rẽ lớn nổi bật màu xanh Neon HUD
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          primaryColor,
+                          primaryColor.withValues(alpha: 0.75),
+                        ],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(18),
+                      boxShadow: [
+                        BoxShadow(
+                          color: primaryColor.withValues(alpha: 0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      _getTurnIcon(currentStep.direction),
+                      color: Colors.white,
+                      size: 34,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  // Thông tin khoảng cách và tên đường cần rẽ
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          distToManeuver < 1000
+                              ? 'Còn ${distToManeuver.round()} m'
+                              : 'Còn ${(distToManeuver / 1000).toStringAsFixed(1)} km',
+                          style: TextStyle(
+                            color: primaryColor,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.5,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          currentStep.streetName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Nút kết nối HUD nhỏ gọn
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: isConnected
+                          ? const Color(0xFF34C759).withValues(alpha: 0.2)
+                          : Colors.white.withValues(alpha: 0.08),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isConnected
+                          ? Icons.bluetooth_connected_rounded
+                          : Icons.bluetooth_rounded,
+                      size: 18,
+                      color: isConnected ? const Color(0xFF34C759) : Colors.white60,
+                    ),
+                  ),
+                ],
+              ),
+              // Xem trước ngã rẽ tiếp theo (Sau đó rẽ vào đâu)
+              if (nextStep != null) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text(
+                        'Sau đó:',
+                        style: TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        _getTurnIcon(nextStep.direction),
+                        size: 14,
+                        color: Colors.white70,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          nextStep.streetName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildNavigatingDashboard({
     required Color textColor,
     required Color secondaryTextColor,
     required Color primaryColor,
     required bool isDark,
   }) {
-    final currentStep = navSteps[currentStepIndex];
-    // Nếu điểm xuất phát khác vị trí GPS (người dùng tự chọn điểm đi giả lập/kế hoạch):
-    // tính khoảng cách theo bước lộ trình OSRM thay vì GPS thiết bị thật đang ở Mỹ
-    final LatLng refPosition = (originPoint != null && originPoint != currentPosition)
-        ? originPoint!
-        : (currentPosition ?? currentStep.location);
-
-    double distToManeuver = (originPoint != null && originPoint != currentPosition)
-        ? currentStep.distance
-        : Geolocator.distanceBetween(
-            refPosition.latitude,
-            refPosition.longitude,
-            currentStep.location.latitude,
-            currentStep.location.longitude,
-          );
+    // Ước tính thời gian đến (Dựa trên vận tốc trung bình 35 km/h trong nội thành)
+    final int estimatedMinutes = max(1, ((totalRouteDistanceKm / 35) * 60).round());
+    final now = DateTime.now().add(Duration(minutes: estimatedMinutes));
+    final String etaTimeStr =
+        "${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
 
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Container(
-              width: 52,
-              height: 52,
+        // Thanh vuốt kéo mở rộng / thu gọn danh sách lộ trình
+        GestureDetector(
+          onTap: () {
+            setState(() {
+              isRouteStepsExpanded = !isRouteStepsExpanded;
+            });
+          },
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
               decoration: BoxDecoration(
-                color: primaryColor,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: primaryColor.withValues(alpha: 0.35),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Icon(
-                _getTurnIcon(currentStep.direction),
-                color: Colors.white,
-                size: 30,
+                color: isDark ? Colors.white24 : Colors.black12,
+                borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(width: 14),
+          ),
+        ),
+
+        // Hàng thông tin tổng quan lộ trình: Thời gian còn lại | Tổng quãng đường | Giờ đến dự kiến
+        Row(
+          children: [
+            // Cụm thông số ETA to rõ
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    distToManeuver < 1000
-                        ? 'Còn ${distToManeuver.round()} m'
-                        : 'Còn ${(distToManeuver / 1000).toStringAsFixed(1)} km',
-                    style: TextStyle(
-                      color: primaryColor,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                    ),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      Text(
+                        '$estimatedMinutes',
+                        style: TextStyle(
+                          color: const Color(0xFF34C759), // Màu xanh thành công iOS
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'phút',
+                        style: TextStyle(
+                          color: const Color(0xFF34C759),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        '${totalRouteDistanceKm.toStringAsFixed(1)} km',
+                        style: TextStyle(
+                          color: textColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '• Đến lúc $etaTimeStr',
+                        style: TextStyle(
+                          color: secondaryTextColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 3),
                   Text(
-                    currentStep.streetName,
+                    destinationName.isNotEmpty ? destinationName : 'Đích đến',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: textColor,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.06)
-                    : Colors.black.withValues(alpha: 0.04),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${currentSpeed.round()}',
-                    style: TextStyle(
-                      color: textColor,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      height: 1.0,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    'KM/H',
-                    style: TextStyle(
                       color: secondaryTextColor,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ],
               ),
             ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Container(
-          height: 1,
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : Colors.black.withValues(alpha: 0.06),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            const Icon(
-              Icons.flag_rounded,
-              size: 16,
-              color: Color(0xFFFF9500),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                destinationName.isNotEmpty ? destinationName : 'Đích đến',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: secondaryTextColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
+
+            // Nút Dừng lộ trình dạng Pill tròn thanh lịch
             InkWell(
               onTap: cancelNavigation,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(20),
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 5,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFF3B30).withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(20),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
                       Icons.close_rounded,
-                      size: 14,
+                      size: 16,
                       color: Color(0xFFFF3B30),
                     ),
                     SizedBox(width: 4),
@@ -1975,7 +2207,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       'Dừng',
                       style: TextStyle(
                         color: Color(0xFFFF3B30),
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -1985,6 +2217,86 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           ],
         ),
+
+        // Bảng danh sách toàn bộ các ngã rẽ (Hiện ra khi bấm hoặc vuốt mở rộng)
+        if (isRouteStepsExpanded) ...[
+          const SizedBox(height: 12),
+          Container(
+            height: 1,
+            color: isDark ? Colors.white12 : Colors.black12,
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 180),
+            child: ListView.separated(
+              physics: const BouncingScrollPhysics(),
+              shrinkWrap: true,
+              itemCount: navSteps.length,
+              separatorBuilder: (_, _) => Divider(
+                height: 1,
+                color: isDark ? Colors.white12 : Colors.black12,
+              ),
+              itemBuilder: (context, index) {
+                final s = navSteps[index];
+                final bool isCurrent = index == currentStepIndex;
+                return Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  decoration: BoxDecoration(
+                    color: isCurrent
+                        ? primaryColor.withValues(alpha: 0.08)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: isCurrent
+                              ? primaryColor
+                              : (isDark ? Colors.white10 : Colors.black12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _getTurnIcon(s.direction),
+                          size: 16,
+                          color: isCurrent
+                              ? Colors.white
+                              : (isDark ? Colors.white70 : Colors.black87),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          s.streetName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isCurrent ? primaryColor : textColor,
+                            fontSize: 13,
+                            fontWeight: isCurrent
+                                ? FontWeight.w700
+                                : FontWeight.normal,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        s.distance < 1000
+                            ? '${s.distance.round()} m'
+                            : '${(s.distance / 1000).toStringAsFixed(1)} km',
+                        style: TextStyle(
+                          color: secondaryTextColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ],
     );
   }
