@@ -152,6 +152,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool isLoadingRoute = false;
   double totalRouteDistanceKm = 0.0;
   Timer? syncTimer;
+  Timer? idleHudTimer;
 
   final List<QuickPlaceItem> quickPlaces = const [
     QuickPlaceItem(
@@ -194,6 +195,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     debounceTimer?.cancel();
     positionStream?.cancel();
     syncTimer?.cancel();
+    idleHudTimer?.cancel();
     disconnectBle();
     startController.dispose();
     destController.dispose();
@@ -313,6 +315,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
       device.connectionState.listen((state) {
         if (state == BluetoothConnectionState.disconnected) {
           if (!mounted) return;
+          idleHudTimer?.cancel();
           setState(() {
             isConnected = false;
             connectedDevice = null;
@@ -324,12 +327,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       if (!mounted) return;
       _showToast('Đã kết nối thành công với TeaNavi HUD!');
+
+      // Bắt đầu timer gửi sync định kỳ cho HUD kể cả khi chưa dẫn đường (Hiển thị tốc độ & đồng hồ)
+      idleHudTimer?.cancel();
+      idleHudTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (isConnected && !isNavigating) {
+          sendIdlePacketToHUD();
+        }
+      });
+      sendIdlePacketToHUD();
     } catch (e) {
       debugPrint("Lỗi kết nối: $e");
     }
   }
 
   void disconnectBle() async {
+    idleHudTimer?.cancel();
     if (connectedDevice != null) {
       await connectedDevice!.disconnect();
       if (!mounted) return;
@@ -364,16 +377,38 @@ class _NavigationScreenState extends State<NavigationScreen> {
     required int speedLimit,
     required int exitNum,
     required String streetName,
+    String? timeStr,
   }) {
     if (rxCharacteristic == null || !isConnected) return;
     String safeStreet = removeDiacritics(streetName).toUpperCase();
+    
+    // Lấy giờ hiện tại "HH:mm" nếu chưa truyền
+    String time = timeStr ??
+        "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
+
+    // Format: "DIR,DIST,SPEED,LIMIT,EXIT,STREET_NAME,TIME\n"
     String packet =
-        "$direction,$distanceMeters,$speedKmH,$speedLimit,$exitNum,$safeStreet\n";
+        "$direction,$distanceMeters,$speedKmH,$speedLimit,$exitNum,$safeStreet,$time\n";
 
     try {
       rxCharacteristic!.write(utf8.encode(packet), withoutResponse: true);
     } catch (e) {
       debugPrint("Lỗi gửi BLE: $e");
+    }
+  }
+
+  void sendIdlePacketToHUD() {
+    if (rxCharacteristic == null || !isConnected) return;
+    // Khi chưa dẫn đường: Gửi tốc độ GPS, giới hạn 50, và giờ thực
+    String time =
+        "${DateTime.now().hour.toString().padLeft(2, '0')}:${DateTime.now().minute.toString().padLeft(2, '0')}";
+    String packet =
+        "0,0,${currentSpeed.round()},50,1,TEANAVI READY,$time\n";
+
+    try {
+      rxCharacteristic!.write(utf8.encode(packet), withoutResponse: true);
+    } catch (e) {
+      debugPrint("Lỗi gửi idle BLE: $e");
     }
   }
 
