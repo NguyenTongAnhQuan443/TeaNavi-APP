@@ -1,17 +1,24 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
-const String vietmapApiKey = 'xxx';
-
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+    ),
+  );
   runApp(const TeaNaviApp());
 }
 
@@ -23,22 +30,52 @@ class TeaNaviApp extends StatelessWidget {
     return MaterialApp(
       title: 'TeaNavi Companion',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF0F111A),
-        primaryColor: const Color(0xFF00E5FF),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF00E5FF),
-          secondary: Color(0xFFFFD600),
-          surface: Color(0xFF1A1D2E),
+      themeMode: ThemeMode.system,
+      theme: ThemeData(
+        brightness: Brightness.light,
+        scaffoldBackgroundColor: const Color(0xFFF7F8FA),
+        primaryColor: const Color(0xFF007AFF),
+        colorScheme: const ColorScheme.light(
+          primary: Color(0xFF007AFF),
+          secondary: Color(0xFF34C759),
+          surface: Colors.white,
+          onSurface: Color(0xFF1C1C1E),
         ),
+        fontFamily: '.SF Pro Text',
+        useMaterial3: true,
+      ),
+      darkTheme: ThemeData(
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF000000),
+        primaryColor: const Color(0xFF0A84FF),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF0A84FF),
+          secondary: Color(0xFF30D158),
+          surface: Color(0xFF1C1C1E),
+          onSurface: Colors.white,
+        ),
+        fontFamily: '.SF Pro Text',
+        useMaterial3: true,
       ),
       home: const NavigationScreen(),
     );
   }
 }
 
+class SearchResultPlace {
+  final String title;
+  final String subtitle;
+  final LatLng location;
+
+  SearchResultPlace({
+    required this.title,
+    required this.subtitle,
+    required this.location,
+  });
+}
+
 class NavigationStep {
-  final int direction; // 0 - 11 tương ứng enum ESP32
+  final int direction;
   final double distance;
   final String streetName;
   final String instruction;
@@ -55,6 +92,18 @@ class NavigationStep {
   });
 }
 
+class QuickPlaceItem {
+  final String title;
+  final IconData icon;
+  final String query;
+
+  const QuickPlaceItem({
+    required this.title,
+    required this.icon,
+    required this.query,
+  });
+}
+
 class NavigationScreen extends StatefulWidget {
   const NavigationScreen({super.key});
 
@@ -65,41 +114,69 @@ class NavigationScreen extends StatefulWidget {
 class _NavigationScreenState extends State<NavigationScreen> {
   // BLE State
   BluetoothDevice? connectedDevice;
-  BluetoothCharacteristic? txCharacteristic;
   BluetoothCharacteristic? rxCharacteristic;
   bool isScanning = false;
   bool isConnected = false;
 
   final String serviceUuid = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-  final String rxUuid =
-      "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; // App ghi vào đây
+  final String rxUuid = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
 
   // GPS & Map State
   final MapController mapController = MapController();
   LatLng? currentPosition;
   double currentSpeed = 0.0;
+  double currentHeading = 0.0;
   StreamSubscription<Position>? positionStream;
 
-  // Lộ trình & Tìm kiếm
-  final TextEditingController searchController = TextEditingController();
+  // Lộ trình & Điểm đi / Điểm đến
+  final TextEditingController startController = TextEditingController();
+  final TextEditingController destController = TextEditingController();
+  LatLng? originPoint;
+  String originName = "Vị trí của bạn";
+  LatLng? destPoint;
+  String destinationName = "";
+
+  bool isSelectingOrigin = false;
+  bool showRoutePlanPanel = false;
+
+  // Danh sách gợi ý tìm kiếm (Autocomplete Suggestions)
+  List<SearchResultPlace> searchSuggestions = [];
+  bool isSearchingSuggestions = false;
+  Timer? debounceTimer;
+  bool activeSearchForOrigin = false;
+
   List<LatLng> routePoints = [];
   List<NavigationStep> navSteps = [];
   int currentStepIndex = 0;
   bool isNavigating = false;
+  bool isLoadingRoute = false;
+  double totalRouteDistanceKm = 0.0;
   Timer? syncTimer;
+
+  final List<QuickPlaceItem> quickPlaces = const [
+    QuickPlaceItem(title: 'Cây xăng', icon: Icons.local_gas_station_rounded, query: 'cây xăng gần nhất'),
+    QuickPlaceItem(title: 'Quán ăn', icon: Icons.restaurant_rounded, query: 'quán ăn gần đây'),
+    QuickPlaceItem(title: 'Bãi xe', icon: Icons.local_parking_rounded, query: 'bãi đỗ xe'),
+    QuickPlaceItem(title: 'Cà phê', icon: Icons.local_cafe_rounded, query: 'quán cà phê gần đây'),
+    QuickPlaceItem(title: 'Nhà', icon: Icons.home_rounded, query: 'Nhà'),
+    QuickPlaceItem(title: 'Công ty', icon: Icons.work_rounded, query: 'Công ty'),
+  ];
 
   @override
   void initState() {
     super.initState();
+    startController.text = "Vị trí của bạn";
     initLocationService();
   }
 
   @override
   void dispose() {
+    debounceTimer?.cancel();
     positionStream?.cancel();
     syncTimer?.cancel();
     disconnectBle();
-    searchController.dispose();
+    startController.dispose();
+    destController.dispose();
     super.dispose();
   }
 
@@ -121,34 +198,36 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
 
     if (!mounted) return;
-    // Lấy chính xác 100% tọa độ GPS thực tế của thiết bị
     LatLng actualPos = LatLng(pos.latitude, pos.longitude);
 
     setState(() {
       currentPosition = actualPos;
       currentSpeed = max(0, pos.speed * 3.6);
+      currentHeading = pos.heading;
+      originPoint ??= actualPos;
     });
 
     mapController.move(currentPosition!, 16);
 
-    // Lắng nghe di chuyển thời gian thực từ GPS thiết bị
-    positionStream =
-        Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.bestForNavigation,
-            distanceFilter: 2, // Cập nhật mỗi 2 mét
-          ),
-        ).listen((Position newPos) {
-          if (!mounted) return;
-          setState(() {
-            currentPosition = LatLng(newPos.latitude, newPos.longitude);
-            currentSpeed = max(0, newPos.speed * 3.6);
-          });
+    positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.bestForNavigation,
+        distanceFilter: 2,
+      ),
+    ).listen((Position newPos) {
+      if (!mounted) return;
+      setState(() {
+        currentPosition = LatLng(newPos.latitude, newPos.longitude);
+        currentSpeed = max(0, newPos.speed * 3.6);
+        if (newPos.heading > 0) {
+          currentHeading = newPos.heading;
+        }
+      });
 
-          if (isNavigating && navSteps.isNotEmpty) {
-            processNavigationUpdate();
-          }
-        });
+      if (isNavigating && navSteps.isNotEmpty) {
+        processNavigationUpdate();
+      }
+    });
   }
 
   // ==========================================
@@ -159,26 +238,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() => isScanning = true);
 
     try {
-      // 1. Kiểm tra Bluetooth có đang bật không
-      if (await FlutterBluePlus.adapterState.first !=
-          BluetoothAdapterState.on) {
+      if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Vui lòng bật Bluetooth trên điện thoại!'),
-          ),
-        );
+        _showToast('Vui lòng bật Bluetooth trên điện thoại!');
         setState(() => isScanning = false);
         return;
       }
 
-      // 2. Lắng nghe kết quả quét trước khi bắt đầu startScan
       var subscription = FlutterBluePlus.scanResults.listen((results) {
         for (ScanResult r in results) {
           String name = r.device.platformName.isNotEmpty
               ? r.device.platformName
               : r.advertisementData.advName;
-          debugPrint(">> Tim thay BLE: '$name' [${r.device.remoteId}]");
           if (name == "TeaNavi_HUD" || name.contains("TeaNavi")) {
             FlutterBluePlus.stopScan();
             connectToDevice(r.device);
@@ -187,7 +258,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
         }
       });
 
-      // 3. Quét tất cả thiết bị xung quanh trong 8 giây
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 8));
       await FlutterBluePlus.isScanning.where((val) => val == false).first;
       subscription.cancel();
@@ -208,24 +278,14 @@ class _NavigationScreenState extends State<NavigationScreen> {
       });
 
       List<BluetoothService> services = await device.discoverServices();
-      debugPrint('>> [BLE] Tim thay ${services.length} services:');
       for (var s in services) {
-        debugPrint('>>   Service UUID: ');
         if (s.uuid.toString().toUpperCase().contains('6E400001')) {
-          debugPrint('>> [BLE] Da tim thay NUS Service!');
           for (var c in s.characteristics) {
-            debugPrint('>>     Char UUID: ');
             if (c.uuid.toString().toUpperCase().contains('6E400002')) {
               rxCharacteristic = c;
-              debugPrint(
-                '>> [BLE] DA TIM THAY RX Characteristic! SAN SANG GUI.',
-              );
             }
           }
         }
-      }
-      if (rxCharacteristic == null) {
-        debugPrint('>> [BLE CANH BAO] KHONG tim thay RX Characteristic!');
       }
 
       device.connectionState.listen((state) {
@@ -236,13 +296,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
             connectedDevice = null;
             rxCharacteristic = null;
           });
+          _showToast('Đã ngắt kết nối với HUD');
         }
       });
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã kết nối thành công với TeaNavi HUD!')),
-      );
+      _showToast('Đã kết nối thành công với TeaNavi HUD!');
     } catch (e) {
       debugPrint("Lỗi kết nối: $e");
     }
@@ -256,10 +315,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
         isConnected = false;
         connectedDevice = null;
       });
+      _showToast('Đã ngắt kết nối Bluetooth');
     }
   }
 
-  // Gửi gói tin sang ESP32: "DIR,DIST,SPEED,LIMIT,EXIT,STREET_NAME"
+  void _showToast(String message) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        ),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
   void sendNavPacketToHUD({
     required int direction,
     required int distanceMeters,
@@ -268,17 +343,10 @@ class _NavigationScreenState extends State<NavigationScreen> {
     required int exitNum,
     required String streetName,
   }) {
-    if (rxCharacteristic == null || !isConnected) {
-      debugPrint(
-        '>> [BLE] KHONG GUI duoc - rxChar=${rxCharacteristic != null}, connected=$isConnected',
-      );
-      return;
-    }
-    // Chuẩn hóa không dấu cho tên đường gửi ESP32
+    if (rxCharacteristic == null || !isConnected) return;
     String safeStreet = removeDiacritics(streetName).toUpperCase();
     String packet =
         "$direction,$distanceMeters,$speedKmH,$speedLimit,$exitNum,$safeStreet\n";
-    debugPrint(">> [BLE GUI]: $packet");
 
     try {
       rxCharacteristic!.write(utf8.encode(packet), withoutResponse: true);
@@ -298,33 +366,186 @@ class _NavigationScreenState extends State<NavigationScreen> {
     return str;
   }
 
-  // Dẫn đường trực tiếp tới tọa độ LatLng
-  Future<void> routeToDestination(LatLng destination, String placeName) async {
-    if (currentPosition == null) return;
+  // ==========================================
+  // REAL-TIME AUTOCOMPLETE SEARCH (HIỂN THỊ DANH SÁCH KẾT QUẢ)
+  // ==========================================
+  void onSearchTextChanged(String query, {required bool forOrigin}) {
+    activeSearchForOrigin = forOrigin;
+    debounceTimer?.cancel();
+    if (query.trim().isEmpty) {
+      setState(() {
+        searchSuggestions.clear();
+        isSearchingSuggestions = false;
+      });
+      return;
+    }
+
+    debounceTimer = Timer(const Duration(milliseconds: 350), () {
+      fetchLocationSuggestions(query.trim());
+    });
+  }
+
+  Future<void> fetchLocationSuggestions(String query) async {
+    setState(() => isSearchingSuggestions = true);
+
+    LatLng anchor = currentPosition ?? const LatLng(10.8220, 106.6875);
+    if (anchor.latitude > 15 || anchor.latitude < 8 || anchor.longitude < 100 || anchor.longitude > 110) {
+      anchor = const LatLng(10.8220, 106.6875);
+    }
+
+    List<SearchResultPlace> results = [];
+
+    // 1. Thử truy vấn qua Photon API với tọa độ neo Việt Nam
+    try {
+      final searchUrl = Uri.parse(
+        'https://photon.komoot.io/api/?q=${Uri.encodeComponent(query)}&limit=8&lat=${anchor.latitude}&lon=${anchor.longitude}',
+      );
+      final res = await http.get(searchUrl).timeout(const Duration(seconds: 4));
+      if (res.statusCode == 200) {
+        final data = json.decode(utf8.decode(res.bodyBytes));
+        final features = data['features'] as List;
+
+        for (var f in features) {
+          final props = f['properties'] as Map<String, dynamic>;
+          final geom = f['geometry']['coordinates'] as List;
+          final name = props['name'] ?? query;
+
+          List<String> subParts = [];
+          if (props['street'] != null) subParts.add(props['street']);
+          if (props['district'] != null) subParts.add(props['district']);
+          if (props['city'] != null) subParts.add(props['city']);
+          if (props['state'] != null && props['state'] != props['city']) subParts.add(props['state']);
+          if (props['country'] != null) subParts.add(props['country']);
+
+          String subtitle = subParts.isNotEmpty ? subParts.join(', ') : 'Địa điểm trên bản đồ';
+
+          results.add(
+            SearchResultPlace(
+              title: name,
+              subtitle: subtitle,
+              location: LatLng((geom[1] as num).toDouble(), (geom[0] as num).toDouble()),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Photon error: $e");
+    }
+
+    // 2. Dự phòng: Nếu Photon trả về ít hơn 3 kết quả hoặc lỗi, gọi tiếp Nominatim OpenStreetMap
+    if (results.length < 3) {
+      try {
+        final nomUrl = Uri.parse(
+          'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=6&countrycodes=vn',
+        );
+        final nomRes = await http.get(
+          nomUrl,
+          headers: {'User-Agent': 'TeaNaviMapApp/1.0'},
+        ).timeout(const Duration(seconds: 4));
+
+        if (nomRes.statusCode == 200) {
+          final nomData = json.decode(utf8.decode(nomRes.bodyBytes)) as List;
+          for (var item in nomData) {
+            String name = item['name'] ?? query;
+            String displayName = item['display_name'] ?? '';
+            double lat = double.tryParse(item['lat'].toString()) ?? 0;
+            double lon = double.tryParse(item['lon'].toString()) ?? 0;
+
+            if (lat != 0 && lon != 0) {
+              // Tránh trùng lặp
+              bool exists = results.any(
+                (r) => (r.location.latitude - lat).abs() < 0.001 &&
+                       (r.location.longitude - lon).abs() < 0.001,
+              );
+              if (!exists) {
+                results.add(
+                  SearchResultPlace(
+                    title: name.isNotEmpty ? name : query,
+                    subtitle: displayName,
+                    location: LatLng(lat, lon),
+                  ),
+                );
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Nominatim error: $e");
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      searchSuggestions = results;
+      isSearchingSuggestions = false;
+    });
+  }
+
+  void selectSearchResult(SearchResultPlace place) {
+    FocusScope.of(context).unfocus();
+    setState(() => searchSuggestions.clear());
+
+    if (activeSearchForOrigin) {
+      setState(() {
+        originPoint = place.location;
+        originName = place.title;
+        startController.text = place.title;
+      });
+      mapController.move(place.location, 16);
+      if (destPoint != null) {
+        calculateRoute(from: originPoint, to: destPoint, destTitle: destinationName);
+      }
+    } else {
+      setState(() {
+        destPoint = place.location;
+        destinationName = place.title;
+        destController.text = place.title;
+      });
+      mapController.move(place.location, 16);
+      calculateRoute(from: originPoint ?? currentPosition, to: place.location, destTitle: place.title);
+    }
+  }
+
+  // ==========================================
+  // OSRM ROUTE (ĐIỂM ĐI -> ĐIỂM ĐẾN)
+  // ==========================================
+  Future<void> calculateRoute({LatLng? from, LatLng? to, String? destTitle}) async {
+    final start = from ?? originPoint ?? currentPosition;
+    final end = to ?? destPoint;
+
+    if (start == null) {
+      _showToast('Chưa xác định được điểm xuất phát!');
+      return;
+    }
+    if (end == null) {
+      _showToast('Vui lòng chọn hoặc nhập điểm đến!');
+      return;
+    }
+
+    setState(() {
+      isLoadingRoute = true;
+      searchSuggestions.clear();
+    });
 
     final osrmUrl = Uri.parse(
       'https://routing.openstreetmap.de/routed-car/route/v1/driving/'
-      '${currentPosition!.longitude},${currentPosition!.latitude};'
-      '${destination.longitude},${destination.latitude}'
+      '${start.longitude},${start.latitude};'
+      '${end.longitude},${end.latitude}'
       '?overview=full&steps=true&geometries=geojson',
     );
 
-    debugPrint(
-      ">> Dang tim duong den: $placeName [${destination.latitude}, ${destination.longitude}]",
-    );
-    debugPrint(">> URL: $osrmUrl");
-
     try {
       final osrmRes = await http.get(osrmUrl);
-      debugPrint(">> OSRM Response Status: ${osrmRes.statusCode}");
       if (osrmRes.statusCode != 200) {
-        debugPrint(">> OSRM Error Body: ${osrmRes.body}");
+        setState(() => isLoadingRoute = false);
+        _showToast('Không thể kết nối máy chủ chỉ đường');
         return;
       }
       final osrmData = json.decode(osrmRes.body);
 
       if (osrmData['routes'] == null || osrmData['routes'].isEmpty) {
-        debugPrint(">> OSRM khong tim thay tuyen duong hop le!");
+        setState(() => isLoadingRoute = false);
+        _showToast('Không tìm thấy tuyến đường giữa 2 vị trí này!');
         return;
       }
 
@@ -333,17 +554,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
       if (!mounted) return;
       setState(() {
+        isLoadingRoute = false;
         routePoints = geometry.map((pt) => LatLng(pt[1], pt[0])).toList();
         navSteps = parseOsrmSteps(route['legs'][0]['steps']);
         currentStepIndex = 0;
         isNavigating = true;
+        destPoint = end;
+        if (destTitle != null) {
+          destinationName = destTitle;
+          destController.text = destTitle;
+        }
+        totalRouteDistanceKm = (route['distance'] as num).toDouble() / 1000;
       });
 
-      debugPrint(
-        ">> Da ve tuyen duong thanh cong voi ${routePoints.length} diem toa do va ${navSteps.length} buoc re!",
-      );
+      if (routePoints.isNotEmpty) {
+        mapController.move(start, 15);
+      }
 
-      // Bắt đầu chu kỳ đồng bộ dữ liệu mỗi 800ms sang ESP32
       syncTimer?.cancel();
       syncTimer = Timer.periodic(const Duration(milliseconds: 800), (t) {
         if (isNavigating && navSteps.isNotEmpty) {
@@ -351,114 +578,54 @@ class _NavigationScreenState extends State<NavigationScreen> {
         }
       });
 
-      // Gui ngay goi tin dau tien sang ESP32
       processNavigationUpdate();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Bắt đầu lộ trình: $placeName (${(route['distance'] / 1000).toStringAsFixed(1)} km)',
-          ),
-          backgroundColor: const Color(0xFF00E5FF).withValues(alpha: 0.9),
-        ),
-      );
+      _showToast('Bắt đầu lộ trình: ${destinationName.isNotEmpty ? destinationName : 'Điểm đến'} (${totalRouteDistanceKm.toStringAsFixed(1)} km)');
     } catch (e) {
+      if (mounted) setState(() => isLoadingRoute = false);
       debugPrint("Lỗi OSRM: $e");
     }
   }
 
-  // ==========================================
-  // OSRM ROUTING API (HOÀN TOÀN MIỄN PHÍ 100%)
-  // ==========================================
-  Future<void> searchAndRoute(String query) async {
-    if (currentPosition == null) return;
+  void swapOriginAndDestination() {
+    setState(() {
+      final tempPt = originPoint;
+      originPoint = destPoint;
+      destPoint = tempPt;
 
-    // 1. Tìm tọa độ điểm đến qua Photon Komoot API (Nhanh gấp 10 lần, tương thích hoàn toàn DNS máy ảo & điện thoại)
-    String q = query.trim();
-    if (q.toLowerCase() == "iuh") {
-      q = "Đại học Công Nghiệp TP.HCM";
-    }
+      final tempName = originName;
+      originName = destinationName.isEmpty ? "Vị trí đã chọn" : destinationName;
+      destinationName = tempName;
 
-    final searchUrl = Uri.parse(
-      'https://photon.komoot.io/api/?q=${Uri.encodeComponent(q)}&limit=1&lat=${currentPosition!.latitude}&lon=${currentPosition!.longitude}',
-    );
+      startController.text = originName;
+      destController.text = destinationName;
+    });
 
-    try {
-      final res = await http.get(searchUrl);
-      if (res.statusCode != 200) return;
-      final data = json.decode(utf8.decode(res.bodyBytes));
-      final features = data['features'] as List;
-      if (features.isEmpty) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Không tìm thấy địa điểm!')),
-        );
-        return;
-      }
-
-      final coords = features[0]['geometry']['coordinates'];
-      double destLon = (coords[0] as num).toDouble();
-      double destLat = (coords[1] as num).toDouble();
-      LatLng destination = LatLng(destLat, destLon);
-      String $placeName = features[0]['properties']['name'] ?? q;
-
-      // 2. Lấy lộ trình Turn-by-Turn từ OSRM (Miễn phí)
-      final osrmUrl = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/'
-        '${currentPosition!.longitude},${currentPosition!.latitude};'
-        '${destination.longitude},${destination.latitude}'
-        '?overview=full&steps=true&geometries=geojson',
-      );
-
-      final osrmRes = await http.get(osrmUrl);
-      if (osrmRes.statusCode != 200) return;
-      final osrmData = json.decode(osrmRes.body);
-
-      if (osrmData['routes'] == null || osrmData['routes'].isEmpty) return;
-
-      final route = osrmData['routes'][0];
-      final geometry = route['geometry']['coordinates'] as List;
-
-      if (!mounted) return;
-      // Lưu polyline để vẽ bản đồ
-      setState(() {
-        routePoints = geometry.map((pt) => LatLng(pt[1], pt[0])).toList();
-        navSteps = parseOsrmSteps(route['legs'][0]['steps']);
-        currentStepIndex = 0;
-        isNavigating = true;
-      });
-
-      // Bắt đầu chu kỳ đồng bộ dữ liệu mỗi 800ms sang ESP32
-      syncTimer?.cancel();
-      syncTimer = Timer.periodic(const Duration(milliseconds: 800), (t) {
-        if (isNavigating && navSteps.isNotEmpty) {
-          processNavigationUpdate();
-        }
-      });
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Bắt đầu lộ trình: ${$placeName}')),
-      );
-    } catch (e) {
-      debugPrint("Lỗi OSRM: $e");
+    if (originPoint != null && destPoint != null) {
+      calculateRoute(from: originPoint, to: destPoint, destTitle: destinationName);
     }
   }
 
-  // Ánh xạ Maneuver của OSRM sang 12 Enum NavDirection của TeaNavi
+  void cancelNavigation() {
+    setState(() {
+      isNavigating = false;
+      routePoints.clear();
+      navSteps.clear();
+      destinationName = "";
+      destController.clear();
+      destPoint = null;
+    });
+    syncTimer?.cancel();
+    _showToast('Đã dừng dẫn đường');
+  }
 
-  // OSRM maneuver type+modifier -> ESP32 NavDirection enum (0-11)
-  // 0=Straight 1=SlightR 2=TurnR 3=SharpR 4=SlightL 5=TurnL 6=SharpL
-  // 7=UTurnL 8=UTurnR 9=ForkRamp 10=Roundabout 11=Destination
   int _osrmToNavDir(String type, String modifier) {
     if (type == 'arrive') return 11;
-    if (type == 'roundabout' || type == 'rotary' || type == 'roundabout turn')
+    if (type == 'roundabout' || type == 'rotary' || type == 'roundabout turn') {
       return 10;
+    }
     if (type == 'fork' || type == 'on ramp' || type == 'off ramp') return 9;
     if (modifier == 'uturn') return 7;
 
-    // Buoc xuat phat / tiep tuc / ten moi -> theo modifier
     if (type == 'depart' ||
         type == 'continue' ||
         type == 'new name' ||
@@ -471,21 +638,19 @@ class _NavigationScreenState extends State<NavigationScreen> {
       return 0;
     }
 
-    // Cuoi duong / merge
     if (type == 'end of road' || type == 'merge') {
       if (modifier == 'right' || modifier == 'slight right') return 2;
       if (modifier == 'left' || modifier == 'slight left') return 5;
       return 0;
     }
 
-    // Turn thong thuong
     if (modifier == 'slight right') return 1;
     if (modifier == 'right') return 2;
     if (modifier == 'sharp right') return 3;
     if (modifier == 'slight left') return 4;
     if (modifier == 'left') return 5;
     if (modifier == 'sharp left') return 6;
-    return 0; // mac dinh di thang
+    return 0;
   }
 
   List<NavigationStep> parseOsrmSteps(List stepsJson) {
@@ -497,10 +662,9 @@ class _NavigationScreenState extends State<NavigationScreen> {
       int exitNum = maneuver['exit'] ?? 1;
 
       int dirEnum = _osrmToNavDir(type, modifier);
-
       double dist = (s['distance'] as num).toDouble();
       String name = (s['name'] == null || s['name'].toString().isEmpty)
-          ? "TIEP TUC DI THANG"
+          ? "Tiếp tục đi thẳng"
           : s['name'];
       var loc = maneuver['location'];
 
@@ -519,296 +683,1309 @@ class _NavigationScreenState extends State<NavigationScreen> {
   }
 
   void processNavigationUpdate() {
-    if (currentPosition == null || currentStepIndex >= navSteps.length) return;
+    if (navSteps.isEmpty || currentStepIndex >= navSteps.length) return;
 
     NavigationStep step = navSteps[currentStepIndex];
 
-    // Tính khoảng cách từ vị trí hiện tại đến ngã rẽ kế tiếp
-    double distToManeuver = Geolocator.distanceBetween(
-      currentPosition!.latitude,
-      currentPosition!.longitude,
-      step.location.latitude,
-      step.location.longitude,
-    );
+    // Sử dụng refPosition phù hợp khi chọn điểm đi tùy chọn hay GPS máy
+    final LatLng refPosition = (originPoint != null && originPoint != currentPosition)
+        ? originPoint!
+        : (currentPosition ?? step.location);
 
-    // Nếu đã qua ngã rẽ (< 15 mét), chuyển sang bước tiếp theo
+    double distToManeuver = (originPoint != null && originPoint != currentPosition)
+        ? step.distance
+        : Geolocator.distanceBetween(
+            refPosition.latitude,
+            refPosition.longitude,
+            step.location.latitude,
+            step.location.longitude,
+          );
+
     if (distToManeuver < 15 && currentStepIndex < navSteps.length - 1) {
       currentStepIndex++;
       step = navSteps[currentStepIndex];
     }
 
-    // Gửi gói tin sang ESP32
     sendNavPacketToHUD(
       direction: step.direction,
       distanceMeters: distToManeuver.round(),
       speedKmH: currentSpeed.round(),
-      speedLimit: 60, // Giới hạn mặc định 60km/h
+      speedLimit: 60,
       exitNum: step.exitNumber,
       streetName: step.streetName,
     );
   }
 
+  IconData _getTurnIcon(int dir) {
+    switch (dir) {
+      case 1:
+        return Icons.turn_slight_right_rounded;
+      case 2:
+        return Icons.turn_right_rounded;
+      case 3:
+        return Icons.turn_sharp_right_rounded;
+      case 4:
+        return Icons.turn_slight_left_rounded;
+      case 5:
+        return Icons.turn_left_rounded;
+      case 6:
+        return Icons.turn_sharp_left_rounded;
+      case 7:
+      case 8:
+        return Icons.u_turn_left_rounded;
+      case 9:
+        return Icons.alt_route_rounded;
+      case 10:
+        return Icons.roundabout_left_rounded;
+      case 11:
+        return Icons.place_rounded;
+      default:
+        return Icons.straight_rounded;
+    }
+  }
+
   // ==========================================
-  // GIAO DIỆN HIỆN ĐẠI (NEON CYBER HUD STYLE)
+  // GIAO DIỆN HIỆN ĐẠI (MINIMAL MODERN IOS STYLE)
   // ==========================================
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primaryColor = Theme.of(context).primaryColor;
+    final topPadding = MediaQuery.of(context).padding.top;
+    final bottomPadding = MediaQuery.of(context).padding.bottom;
+
+    final glassBg = isDark
+        ? const Color(0xFF1C1C1E).withValues(alpha: 0.90)
+        : Colors.white.withValues(alpha: 0.92);
+    final glassBorder = isDark
+        ? Colors.white.withValues(alpha: 0.12)
+        : Colors.black.withValues(alpha: 0.06);
+    final textColor = isDark ? Colors.white : const Color(0xFF1C1C1E);
+    final secondaryTextColor = isDark ? Colors.white60 : Colors.black54;
+
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF131622),
-        elevation: 0,
-        title: const Row(
-          children: [
-            Icon(Icons.navigation, color: Color(0xFF00E5FF)),
-            SizedBox(width: 8),
-            Text(
-              'TeaNavi Map',
-              style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.2),
-            ),
-          ],
-        ),
-        actions: [
-          // Nút quét và kết nối BLE
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: ActionChip(
-              avatar: Icon(
-                isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
-                color: isConnected ? Colors.greenAccent : Colors.grey,
-                size: 18,
-              ),
-              label: Text(
-                isConnected
-                    ? 'TeaNavi'
-                    : (isScanning ? 'Đang quét...' : 'Kết nối HUD'),
-                style: TextStyle(
-                  color: isConnected ? Colors.greenAccent : Colors.white70,
-                  fontSize: 12,
-                ),
-              ),
-              backgroundColor: isConnected
-                  ? Colors.green.withValues(alpha: 0.15)
-                  : const Color(0xFF222638),
-              onPressed: isConnected ? disconnectBle : startScanBle,
-            ),
-          ),
-        ],
-      ),
       body: Stack(
         children: [
-          // 1. Bản đồ OpenStreetMap hiển thị trực quan
+          // 1. Fullscreen Map (Edge-to-Edge)
           FlutterMap(
             mapController: mapController,
             options: MapOptions(
               initialCenter: currentPosition ?? const LatLng(10.8220, 106.6875),
-              initialZoom: 15.0,
+              initialZoom: 15.5,
               onTap: (tapPosition, point) {
-                // Nhấn trực tiếp lên bản đồ để chọn điểm đến và dẫn đường tức thì!
-                searchController.text =
+                FocusScope.of(context).unfocus();
+                setState(() => searchSuggestions.clear());
+
+                final coordStr =
                     "${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}";
-                routeToDestination(point, "Điểm đã chọn trên bản đồ");
+
+                if (isSelectingOrigin) {
+                  setState(() {
+                    originPoint = point;
+                    originName = coordStr;
+                    startController.text = coordStr;
+                  });
+                  _showToast('Đã chọn điểm xuất phát trên bản đồ');
+                  if (destPoint != null) {
+                    calculateRoute(from: originPoint, to: destPoint);
+                  }
+                } else {
+                  setState(() {
+                    destPoint = point;
+                    destinationName = coordStr;
+                    destController.text = coordStr;
+                  });
+                  calculateRoute(
+                    from: originPoint ?? currentPosition,
+                    to: point,
+                    destTitle: "Điểm ghim trên bản đồ",
+                  );
+                }
               },
             ),
             children: [
               TileLayer(
-                urlTemplate:
-                    'https://maps.vietmap.vn/api/tm/{z}/{x}/{y}@2x.png?apikey=$vietmapApiKey',
+                urlTemplate: isDark
+                    ? 'https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}@2x.png'
+                    : 'https://mt{s}.google.com/vt/lyrs=m&hl=vi&x={x}&y={y}&z={z}',
+                subdomains: isDark ? const ['a', 'b', 'c', 'd'] : const ['0', '1', '2', '3'],
                 userAgentPackageName: 'com.teaverse.teanavi_map',
-                fallbackUrl:
-                    'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+                fallbackUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
               ),
               if (routePoints.isNotEmpty)
                 PolylineLayer(
                   polylines: [
                     Polyline(
                       points: routePoints,
+                      strokeWidth: 8.0,
+                      color: primaryColor.withValues(alpha: 0.35),
+                    ),
+                    Polyline(
+                      points: routePoints,
                       strokeWidth: 5.0,
-                      color: const Color(0xFF00E5FF),
+                      color: primaryColor,
                     ),
                   ],
                 ),
-              if (currentPosition != null)
-                MarkerLayer(
-                  markers: [
+              MarkerLayer(
+                markers: [
+                  if (currentPosition != null)
                     Marker(
                       point: currentPosition!,
-                      width: 40,
-                      height: 40,
-                      child: const Icon(
-                        Icons.navigation,
-                        color: Colors.blueAccent,
-                        size: 30,
+                      width: 50,
+                      height: 50,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: primaryColor.withValues(alpha: 0.18),
+                            ),
+                          ),
+                          Container(
+                            width: 22,
+                            height: 22,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: primaryColor,
+                              border: Border.all(color: Colors.white, width: 3),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: primaryColor.withValues(alpha: 0.45),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Transform.rotate(
+                              angle: (currentHeading * pi) / 180,
+                              child: const Icon(
+                                Icons.navigation,
+                                size: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  if (originPoint != null && originPoint != currentPosition)
+                    Marker(
+                      point: originPoint!,
+                      width: 40,
+                      height: 40,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF34C759),
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: const [
+                            BoxShadow(color: Colors.black26, blurRadius: 6),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.trip_origin_rounded,
+                          size: 18,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  if (destPoint != null)
+                    Marker(
+                      point: destPoint!,
+                      width: 44,
+                      height: 44,
+                      child: const Icon(
+                        Icons.location_on_rounded,
+                        color: Color(0xFFFF3B30),
+                        size: 40,
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
 
-          // 2. Thanh tìm kiếm điểm đến trên đỉnh
+          // 2. Top Header & Thanh tìm kiếm
           Positioned(
-            top: 16,
+            top: topPadding + 10,
             left: 16,
             right: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A1D2E).withValues(alpha: 0.92),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFF00E5FF).withValues(alpha: 0.4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header Capsule
+                Row(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: glassBg,
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: glassBorder),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.06),
+                                blurRadius: 12,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: primaryColor,
+                                ),
+                                child: const Icon(
+                                  Icons.navigation_rounded,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                'TeaNavi',
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                  letterSpacing: -0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                        child: InkWell(
+                          onTap: () {
+                            setState(() {
+                              showRoutePlanPanel = !showRoutePlanPanel;
+                              searchSuggestions.clear();
+                            });
+                          },
+                          borderRadius: BorderRadius.circular(24),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: showRoutePlanPanel
+                                  ? primaryColor.withValues(alpha: 0.18)
+                                  : glassBg,
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: showRoutePlanPanel
+                                    ? primaryColor
+                                    : glassBorder,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.alt_route_rounded,
+                                  size: 16,
+                                  color: showRoutePlanPanel
+                                      ? primaryColor
+                                      : textColor,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  'Điểm đi/đến',
+                                  style: TextStyle(
+                                    color: showRoutePlanPanel
+                                        ? primaryColor
+                                        : textColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(24),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                        child: InkWell(
+                          onTap: isConnected ? disconnectBle : startScanBle,
+                          borderRadius: BorderRadius.circular(24),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: isConnected
+                                  ? (isDark
+                                      ? const Color(0xFF30D158).withValues(alpha: 0.2)
+                                      : const Color(0xFF34C759).withValues(alpha: 0.15))
+                                  : glassBg,
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: isConnected
+                                    ? const Color(0xFF34C759).withValues(alpha: 0.5)
+                                    : glassBorder,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isScanning)
+                                  const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                else
+                                  Icon(
+                                    isConnected
+                                        ? Icons.bluetooth_connected_rounded
+                                        : Icons.bluetooth_rounded,
+                                    size: 16,
+                                    color: isConnected
+                                        ? const Color(0xFF34C759)
+                                        : secondaryTextColor,
+                                  ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  isConnected
+                                      ? 'HUD'
+                                      : (isScanning ? 'Quét...' : 'HUD'),
+                                  style: TextStyle(
+                                    color: isConnected
+                                        ? const Color(0xFF34C759)
+                                        : textColor,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.search, color: Color(0xFF00E5FF)),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: TextField(
-                      controller: searchController,
-                      style: const TextStyle(color: Colors.white),
-                      textInputAction: TextInputAction.search,
-                      decoration: const InputDecoration(
-                        hintText: 'Nhập điểm đến (VD: Chợ Bến Thành, IUH)...',
-                        hintStyle: TextStyle(color: Colors.white54),
-                        border: InputBorder.none,
-                      ),
-                      onSubmitted: (text) => searchAndRoute(text),
-                    ),
-                  ),
-                  InkWell(
-                    onTap: () {
-                      debugPrint(">> Nguoi dung BAM nut tim kiem!");
-                      searchAndRoute(searchController.text);
-                    },
-                    borderRadius: BorderRadius.circular(20),
+                const SizedBox(height: 10),
+
+                // Card Thanh tìm kiếm
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(22),
+                  child: BackdropFilter(
+                    filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
                     child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF00E5FF),
-                        shape: BoxShape.circle,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
                       ),
-                      child: const Icon(
-                        Icons.arrow_forward,
-                        color: Colors.black,
-                        size: 20,
+                      decoration: BoxDecoration(
+                        color: glassBg,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: glassBorder),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 18,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: showRoutePlanPanel
+                          ? _buildOriginDestinationPanel(
+                              textColor: textColor,
+                              secondaryTextColor: secondaryTextColor,
+                              primaryColor: primaryColor,
+                              isDark: isDark,
+                            )
+                          : _buildSimpleSearchBar(
+                              textColor: textColor,
+                              secondaryTextColor: secondaryTextColor,
+                              primaryColor: primaryColor,
+                            ),
+                    ),
+                  ),
+                ),
+
+                // 3. DANH SÁCH GỢI Ý AUTOCOMPLETE (SEARCH RESULTS LIST)
+                if (searchSuggestions.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(20),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                        child: Container(
+                          constraints: const BoxConstraints(maxHeight: 280),
+                          decoration: BoxDecoration(
+                            color: glassBg,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: glassBorder),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.12),
+                                blurRadius: 20,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: Material(
+                            color: Colors.transparent,
+                            child: ListView.separated(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              shrinkWrap: true,
+                              physics: const BouncingScrollPhysics(),
+                              itemCount: searchSuggestions.length,
+                              separatorBuilder: (_, _) => Divider(
+                                height: 1,
+                                color: isDark ? Colors.white12 : Colors.black12,
+                              ),
+                              itemBuilder: (context, index) {
+                                final item = searchSuggestions[index];
+                                return ListTile(
+                                  leading: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: primaryColor.withValues(alpha: 0.12),
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.location_on_rounded,
+                                      size: 20,
+                                      color: primaryColor,
+                                    ),
+                                  ),
+                                  title: Text(
+                                    item.title,
+                                    style: TextStyle(
+                                      color: textColor,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    item.subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: secondaryTextColor,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  onTap: () => selectSearchResult(item),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ],
-              ),
+
+                const SizedBox(height: 10),
+
+                // Quick Short-cuts
+                if (searchSuggestions.isEmpty)
+                  SizedBox(
+                    height: 36,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      itemCount: quickPlaces.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final item = quickPlaces[index];
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(18),
+                          child: BackdropFilter(
+                            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                            child: InkWell(
+                              onTap: () {
+                                destController.text = item.query;
+                                onSearchTextChanged(item.query, forOrigin: false);
+                              },
+                              borderRadius: BorderRadius.circular(18),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: glassBg,
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(color: glassBorder),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.04),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      item.icon,
+                                      size: 16,
+                                      color: primaryColor,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      item.title,
+                                      style: TextStyle(
+                                        color: textColor,
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
             ),
           ),
 
-          // 3. Card điều khiển & Giám sát HUD bên dưới
+          // 4. Right Floating Map Controls
           Positioned(
-            bottom: 24,
+            right: 16,
+            bottom: isNavigating ? 190 : 130,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _buildMapControlBtn(
+                  icon: Icons.add_rounded,
+                  isDark: isDark,
+                  glassBg: glassBg,
+                  glassBorder: glassBorder,
+                  textColor: textColor,
+                  onTap: () {
+                    mapController.move(
+                      mapController.camera.center,
+                      mapController.camera.zoom + 1,
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildMapControlBtn(
+                  icon: Icons.remove_rounded,
+                  isDark: isDark,
+                  glassBg: glassBg,
+                  glassBorder: glassBorder,
+                  textColor: textColor,
+                  onTap: () {
+                    mapController.move(
+                      mapController.camera.center,
+                      mapController.camera.zoom - 1,
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+                _buildMapControlBtn(
+                  icon: Icons.my_location_rounded,
+                  isDark: isDark,
+                  glassBg: glassBg,
+                  glassBorder: glassBorder,
+                  textColor: primaryColor,
+                  onTap: () {
+                    if (currentPosition != null) {
+                      mapController.move(currentPosition!, 16);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+
+          // 5. Compact Floating HUD & Navigation Bottom Card
+          Positioned(
             left: 16,
             right: 16,
-            child: Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFF131622).withValues(alpha: 0.95),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF282D44)),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  // Cụm tốc độ GPS
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'TỐC ĐỘ GPS',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                      ),
-                      Text(
-                        '${currentSpeed.round()}',
-                        style: const TextStyle(
-                          color: Color(0xFF00E5FF),
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const Text(
-                        'KM/H',
-                        style: TextStyle(color: Colors.white38, fontSize: 10),
+            bottom: max(bottomPadding, 16),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: glassBg,
+                    borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: glassBorder),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 24,
+                        offset: const Offset(0, 8),
                       ),
                     ],
                   ),
-
-                  // Cụm thông tin ngã rẽ
-                  if (isNavigating && navSteps.isNotEmpty)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              navSteps[currentStepIndex].streetName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xFFFFD600),
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Đang phát Bluetooth sang HUD ESP32...',
-                              style: TextStyle(
-                                color: Colors.greenAccent.shade200,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
+                  child: isNavigating && navSteps.isNotEmpty
+                      ? _buildNavigatingDashboard(
+                          textColor: textColor,
+                          secondaryTextColor: secondaryTextColor,
+                          primaryColor: primaryColor,
+                          isDark: isDark,
+                        )
+                      : _buildIdleDashboard(
+                          textColor: textColor,
+                          secondaryTextColor: secondaryTextColor,
+                          primaryColor: primaryColor,
+                          isDark: isDark,
                         ),
-                      ),
-                    )
-                  else
-                    const Expanded(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Text(
-                          'Sẵn sàng dẫn đường & truyền BLE sang TeaNavi HUD',
-                          style: TextStyle(color: Colors.white60, fontSize: 12),
-                        ),
-                      ),
-                    ),
-
-                  // Nút định vị lại
-                  IconButton(
-                    style: IconButton.styleFrom(
-                      backgroundColor: const Color(0xFF222638),
-                    ),
-                    icon: const Icon(
-                      Icons.my_location,
-                      color: Color(0xFF00E5FF),
-                    ),
-                    onPressed: () {
-                      if (currentPosition != null) {
-                        mapController.move(currentPosition!, 16);
-                      }
-                    },
-                  ),
-                ],
+                ),
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSimpleSearchBar({
+    required Color textColor,
+    required Color secondaryTextColor,
+    required Color primaryColor,
+  }) {
+    return Row(
+      children: [
+        Icon(Icons.search_rounded, color: primaryColor, size: 22),
+        const SizedBox(width: 10),
+        Expanded(
+          child: TextField(
+            controller: destController,
+            style: TextStyle(
+              color: textColor,
+              fontSize: 15,
+              fontWeight: FontWeight.w500,
+            ),
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: 'Tìm điểm đến, chợ, trường học...',
+              hintStyle: TextStyle(
+                color: secondaryTextColor,
+                fontSize: 14,
+              ),
+              border: InputBorder.none,
+              isDense: true,
+            ),
+            onChanged: (text) => onSearchTextChanged(text, forOrigin: false),
+            onSubmitted: (text) => fetchLocationSuggestions(text),
+          ),
+        ),
+        if (isSearchingSuggestions)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 6),
+            child: SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else if (destController.text.isNotEmpty)
+          GestureDetector(
+            onTap: () {
+              destController.clear();
+              setState(() => searchSuggestions.clear());
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(4.0),
+              child: Icon(
+                Icons.cancel_rounded,
+                size: 18,
+                color: secondaryTextColor,
+              ),
+            ),
+          ),
+        const SizedBox(width: 4),
+        InkWell(
+          onTap: () {
+            if (searchSuggestions.isNotEmpty) {
+              selectSearchResult(searchSuggestions.first);
+            } else {
+              fetchLocationSuggestions(destController.text);
+            }
+          },
+          borderRadius: BorderRadius.circular(14),
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: primaryColor,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: isLoadingRoute
+                ? const Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    ),
+                  )
+                : const Icon(
+                    Icons.arrow_forward_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildOriginDestinationPanel({
+    required Color textColor,
+    required Color secondaryTextColor,
+    required Color primaryColor,
+    required bool isDark,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () {
+                setState(() => isSelectingOrigin = true);
+                _showToast('Chế độ: Chạm bản đồ để chọn Điểm xuất phát');
+              },
+              child: Container(
+                width: 22,
+                height: 22,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: isSelectingOrigin
+                      ? const Color(0xFF34C759)
+                      : const Color(0xFF34C759).withValues(alpha: 0.2),
+                  border: Border.all(
+                    color: const Color(0xFF34C759),
+                    width: 2,
+                  ),
+                ),
+                child: Center(
+                  child: Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: startController,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Chọn điểm đi (Mặc định: Vị trí của bạn)',
+                  hintStyle: TextStyle(
+                    color: secondaryTextColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.normal,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (text) => onSearchTextChanged(text, forOrigin: true),
+                onSubmitted: (text) => fetchLocationSuggestions(text),
+              ),
+            ),
+            IconButton(
+              icon: Icon(
+                Icons.my_location_rounded,
+                size: 18,
+                color: (originPoint == currentPosition || originPoint == null)
+                    ? primaryColor
+                    : secondaryTextColor,
+              ),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+              tooltip: 'Dùng vị trí hiện tại',
+              onPressed: () {
+                if (currentPosition != null) {
+                  setState(() {
+                    originPoint = currentPosition;
+                    originName = "Vị trí của bạn";
+                    startController.text = originName;
+                    searchSuggestions.clear();
+                  });
+                  _showToast('Đã chọn điểm đi là Vị trí hiện tại');
+                  if (destPoint != null) {
+                    calculateRoute(from: originPoint, to: destPoint);
+                  }
+                }
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            const SizedBox(width: 10),
+            Container(
+              width: 2,
+              height: 18,
+              color: isDark ? Colors.white24 : Colors.black12,
+            ),
+            const Spacer(),
+            InkWell(
+              onTap: swapOriginAndDestination,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.swap_vert_rounded,
+                      size: 18,
+                      color: primaryColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Đảo chiều',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: primaryColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () {
+                setState(() => isSelectingOrigin = false);
+                _showToast('Chế độ: Chạm bản đồ để chọn Điểm đến');
+              },
+              child: const Icon(
+                Icons.location_on_rounded,
+                color: Color(0xFFFF3B30),
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextField(
+                controller: destController,
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+                decoration: InputDecoration(
+                  hintText: 'Nhập điểm đến...',
+                  hintStyle: TextStyle(
+                    color: secondaryTextColor,
+                    fontSize: 13,
+                    fontWeight: FontWeight.normal,
+                  ),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (text) => onSearchTextChanged(text, forOrigin: false),
+                onSubmitted: (text) => fetchLocationSuggestions(text),
+              ),
+            ),
+            InkWell(
+              onTap: () {
+                if (searchSuggestions.isNotEmpty) {
+                  selectSearchResult(searchSuggestions.first);
+                } else if (destPoint != null) {
+                  calculateRoute(from: originPoint ?? currentPosition, to: destPoint);
+                } else {
+                  fetchLocationSuggestions(destController.text);
+                }
+              },
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: primaryColor,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: isLoadingRoute
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.directions_rounded,
+                            color: Colors.white,
+                            size: 16,
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            'Tìm đường',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMapControlBtn({
+    required IconData icon,
+    required bool isDark,
+    required Color glassBg,
+    required Color glassBorder,
+    required Color textColor,
+    required VoidCallback onTap,
+  }) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(22),
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: glassBg,
+              shape: BoxShape.circle,
+              border: Border.all(color: glassBorder),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 10,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: Icon(icon, size: 20, color: textColor),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildIdleDashboard({
+    required Color textColor,
+    required Color secondaryTextColor,
+    required Color primaryColor,
+    required bool isDark,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: isDark
+                ? Colors.white.withValues(alpha: 0.06)
+                : Colors.black.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${currentSpeed.round()}',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 26,
+                  fontWeight: FontWeight.w800,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'KM/H',
+                style: TextStyle(
+                  color: secondaryTextColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Sẵn sàng dẫn đường',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                isConnected
+                    ? 'Đang phát sóng BLE sang HUD ESP32'
+                    : 'Chạm điểm trên map hoặc nhập điểm đi & đến',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isConnected ? const Color(0xFF34C759) : secondaryTextColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildNavigatingDashboard({
+    required Color textColor,
+    required Color secondaryTextColor,
+    required Color primaryColor,
+    required bool isDark,
+  }) {
+    final currentStep = navSteps[currentStepIndex];
+    // Nếu điểm xuất phát khác vị trí GPS (người dùng tự chọn điểm đi giả lập/kế hoạch):
+    // tính khoảng cách theo bước lộ trình OSRM thay vì GPS thiết bị thật đang ở Mỹ
+    final LatLng refPosition = (originPoint != null && originPoint != currentPosition)
+        ? originPoint!
+        : (currentPosition ?? currentStep.location);
+
+    double distToManeuver = (originPoint != null && originPoint != currentPosition)
+        ? currentStep.distance
+        : Geolocator.distanceBetween(
+            refPosition.latitude,
+            refPosition.longitude,
+            currentStep.location.latitude,
+            currentStep.location.longitude,
+          );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: primaryColor,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: primaryColor.withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Icon(
+                _getTurnIcon(currentStep.direction),
+                color: Colors.white,
+                size: 30,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    distToManeuver < 1000
+                        ? 'Còn ${distToManeuver.round()} m'
+                        : 'Còn ${(distToManeuver / 1000).toStringAsFixed(1)} km',
+                    style: TextStyle(
+                      color: primaryColor,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    currentStep.streetName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.06)
+                    : Colors.black.withValues(alpha: 0.04),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${currentSpeed.round()}',
+                    style: TextStyle(
+                      color: textColor,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      height: 1.0,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'KM/H',
+                    style: TextStyle(
+                      color: secondaryTextColor,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Container(
+          height: 1,
+          color: isDark
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.06),
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            const Icon(
+              Icons.flag_rounded,
+              size: 16,
+              color: Color(0xFFFF9500),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                destinationName.isNotEmpty ? destinationName : 'Đích đến',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: secondaryTextColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+            InkWell(
+              onTap: cancelNavigation,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 5,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF3B30).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.close_rounded,
+                      size: 14,
+                      color: Color(0xFFFF3B30),
+                    ),
+                    SizedBox(width: 4),
+                    Text(
+                      'Dừng',
+                      style: TextStyle(
+                        color: Color(0xFFFF3B30),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
