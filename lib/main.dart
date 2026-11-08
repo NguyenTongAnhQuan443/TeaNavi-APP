@@ -137,7 +137,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
   String destinationName = "";
 
   bool isSelectingOrigin = false;
-  bool showRoutePlanPanel = false;
   bool isRouteStepsExpanded = false; // Bật tắt danh sách toàn bộ các ngã rẽ chi tiết
 
   // Danh sách gợi ý tìm kiếm (Autocomplete Suggestions)
@@ -1034,85 +1033,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       child: BackdropFilter(
                         filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                         child: InkWell(
-                          onTap: () {
-                            setState(() {
-                              showRoutePlanPanel = !showRoutePlanPanel;
-                              searchSuggestions.clear();
-                            });
-                          },
-                          borderRadius: BorderRadius.circular(24),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: showRoutePlanPanel
-                                  ? primaryColor.withValues(alpha: 0.18)
-                                  : glassBg,
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: showRoutePlanPanel
-                                    ? primaryColor
-                                    : glassBorder,
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.alt_route_rounded,
-                                  size: 16,
-                                  color: showRoutePlanPanel
-                                      ? primaryColor
-                                      : textColor,
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  'Điểm đi/đến',
-                                  style: TextStyle(
-                                    color: showRoutePlanPanel
-                                        ? primaryColor
-                                        : textColor,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                        child: InkWell(
                           onTap: isConnected ? disconnectBle : startScanBle,
                           borderRadius: BorderRadius.circular(24),
                           child: Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
+                              horizontal: 14,
                               vertical: 8,
                             ),
                             decoration: BoxDecoration(
                               color: isConnected
                                   ? (isDark
-                                        ? const Color(
-                                            0xFF30D158,
-                                          ).withValues(alpha: 0.2)
-                                        : const Color(
-                                            0xFF34C759,
-                                          ).withValues(alpha: 0.15))
+                                        ? const Color(0xFF30D158).withValues(alpha: 0.2)
+                                        : const Color(0xFF34C759).withValues(alpha: 0.15))
                                   : glassBg,
                               borderRadius: BorderRadius.circular(24),
                               border: Border.all(
                                 color: isConnected
-                                    ? const Color(
-                                        0xFF34C759,
-                                      ).withValues(alpha: 0.5)
+                                    ? const Color(0xFF34C759).withValues(alpha: 0.5)
                                     : glassBorder,
                               ),
                             ),
@@ -1137,11 +1074,11 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                         ? const Color(0xFF34C759)
                                         : secondaryTextColor,
                                   ),
-                                const SizedBox(width: 5),
+                                const SizedBox(width: 6),
                                 Text(
                                   isConnected
-                                      ? 'HUD'
-                                      : (isScanning ? 'Quét...' : 'HUD'),
+                                      ? 'HUD Đã kết nối'
+                                      : (isScanning ? 'Đang quét...' : 'Kết nối HUD'),
                                   style: TextStyle(
                                     color: isConnected
                                         ? const Color(0xFF34C759)
@@ -1160,40 +1097,34 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 ),
                 const SizedBox(height: 10),
 
-                // Card Thanh tìm kiếm
+                // Card Điểm đi & Điểm đến (Modern Glass Planner)
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(22),
+                  borderRadius: BorderRadius.circular(24),
                   child: BackdropFilter(
                     filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 14,
-                        vertical: 10,
+                        vertical: 12,
                       ),
                       decoration: BoxDecoration(
                         color: glassBg,
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.circular(24),
                         border: Border.all(color: glassBorder),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 18,
-                            offset: const Offset(0, 4),
+                            color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.08),
+                            blurRadius: 20,
+                            offset: const Offset(0, 6),
                           ),
                         ],
                       ),
-                      child: showRoutePlanPanel
-                          ? _buildOriginDestinationPanel(
-                              textColor: textColor,
-                              secondaryTextColor: secondaryTextColor,
-                              primaryColor: primaryColor,
-                              isDark: isDark,
-                            )
-                          : _buildSimpleSearchBar(
-                              textColor: textColor,
-                              secondaryTextColor: secondaryTextColor,
-                              primaryColor: primaryColor,
-                            ),
+                      child: _buildOriginDestinationPanel(
+                        textColor: textColor,
+                        secondaryTextColor: secondaryTextColor,
+                        primaryColor: primaryColor,
+                        isDark: isDark,
+                      ),
                     ),
                   ),
                 ),
@@ -1465,314 +1396,322 @@ class _NavigationScreenState extends State<NavigationScreen> {
     );
   }
 
-  Widget _buildSimpleSearchBar({
-    required Color textColor,
-    required Color secondaryTextColor,
-    required Color primaryColor,
-  }) {
-    return Row(
-      children: [
-        Icon(Icons.search_rounded, color: primaryColor, size: 22),
-        const SizedBox(width: 10),
-        Expanded(
-          child: TextField(
-            controller: destController,
-            style: TextStyle(
-              color: textColor,
-              fontSize: 15,
-              fontWeight: FontWeight.w500,
-            ),
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: 'Tìm điểm đến, chợ, trường học...',
-              hintStyle: TextStyle(color: secondaryTextColor, fontSize: 14),
-              border: InputBorder.none,
-              isDense: true,
-            ),
-            onChanged: (text) => onSearchTextChanged(text, forOrigin: false),
-            onSubmitted: (text) => fetchLocationSuggestions(text),
-          ),
-        ),
-        if (isSearchingSuggestions)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 6),
-            child: SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          )
-        else if (destController.text.isNotEmpty)
-          GestureDetector(
-            onTap: () {
-              destController.clear();
-              setState(() => searchSuggestions.clear());
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(4.0),
-              child: Icon(
-                Icons.cancel_rounded,
-                size: 18,
-                color: secondaryTextColor,
-              ),
-            ),
-          ),
-        const SizedBox(width: 4),
-        InkWell(
-          onTap: () {
-            if (searchSuggestions.isNotEmpty) {
-              selectSearchResult(searchSuggestions.first);
-            } else {
-              fetchLocationSuggestions(destController.text);
-            }
-          },
-          borderRadius: BorderRadius.circular(14),
-          child: Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: primaryColor,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: isLoadingRoute
-                ? const Center(
-                    child: SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    ),
-                  )
-                : const Icon(
-                    Icons.arrow_forward_rounded,
-                    color: Colors.white,
-                    size: 18,
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildOriginDestinationPanel({
     required Color textColor,
     required Color secondaryTextColor,
     required Color primaryColor,
     required bool isDark,
   }) {
+    final inputBg = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.04);
+    final inputBorder = isDark
+        ? Colors.white.withValues(alpha: 0.1)
+        : Colors.black.withValues(alpha: 0.06);
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            GestureDetector(
-              onTap: () {
-                setState(() => isSelectingOrigin = true);
-                _showToast('Chế độ: Chạm bản đồ để chọn Điểm xuất phát');
-              },
-              child: Container(
-                width: 22,
-                height: 22,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: isSelectingOrigin
-                      ? const Color(0xFF34C759)
-                      : const Color(0xFF34C759).withValues(alpha: 0.2),
-                  border: Border.all(color: const Color(0xFF34C759), width: 2),
-                ),
-                child: Center(
+            // Left route connector (Green circle -> line -> Red pin)
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    setState(() => isSelectingOrigin = true);
+                    _showToast('Chế độ: Chạm bản đồ để chọn Điểm xuất phát');
+                  },
                   child: Container(
-                    width: 6,
-                    height: 6,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
+                    width: 20,
+                    height: 20,
+                    decoration: BoxDecoration(
                       shape: BoxShape.circle,
+                      color: const Color(0xFF34C759).withValues(alpha: 0.15),
+                      border: Border.all(
+                        color: const Color(0xFF34C759),
+                        width: 2.2,
+                      ),
+                    ),
+                    child: Center(
+                      child: Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF34C759),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 4),
+                  width: 2,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.white24 : Colors.black12,
+                    borderRadius: BorderRadius.circular(1),
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    setState(() => isSelectingOrigin = false);
+                    _showToast('Chế độ: Chạm bản đồ để chọn Điểm đến');
+                  },
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.location_on_rounded,
+                      color: Color(0xFFFF3B30),
+                      size: 20,
+                    ),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(width: 12),
+
+            // Middle input fields (Origin + Destination)
             Expanded(
-              child: TextField(
-                controller: startController,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Chọn điểm đi (Mặc định: Vị trí của bạn)',
-                  hintStyle: TextStyle(
-                    color: secondaryTextColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.normal,
-                  ),
-                  border: InputBorder.none,
-                  isDense: true,
-                ),
-                onChanged: (text) => onSearchTextChanged(text, forOrigin: true),
-                onSubmitted: (text) => fetchLocationSuggestions(text),
-              ),
-            ),
-            IconButton(
-              icon: Icon(
-                Icons.my_location_rounded,
-                size: 18,
-                color: (originPoint == currentPosition || originPoint == null)
-                    ? primaryColor
-                    : secondaryTextColor,
-              ),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              tooltip: 'Dùng vị trí hiện tại',
-              onPressed: () {
-                if (currentPosition != null) {
-                  setState(() {
-                    originPoint = currentPosition;
-                    originName = "Vị trí của bạn";
-                    startController.text = originName;
-                    searchSuggestions.clear();
-                  });
-                  _showToast('Đã chọn điểm đi là Vị trí hiện tại');
-                  if (destPoint != null) {
-                    calculateRoute(from: originPoint, to: destPoint);
-                  }
-                }
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            const SizedBox(width: 10),
-            Container(
-              width: 2,
-              height: 18,
-              color: isDark ? Colors.white24 : Colors.black12,
-            ),
-            const Spacer(),
-            InkWell(
-              onTap: swapOriginAndDestination,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.swap_vert_rounded,
-                      size: 18,
-                      color: primaryColor,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 1. Origin Input Field
+                  Container(
+                    height: 38,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: inputBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: inputBorder),
                     ),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Đảo chiều',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: primaryColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-        Row(
-          children: [
-            GestureDetector(
-              onTap: () {
-                setState(() => isSelectingOrigin = false);
-                _showToast('Chế độ: Chạm bản đồ để chọn Điểm đến');
-              },
-              child: const Icon(
-                Icons.location_on_rounded,
-                color: Color(0xFFFF3B30),
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: TextField(
-                controller: destController,
-                style: TextStyle(
-                  color: textColor,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Nhập điểm đến...',
-                  hintStyle: TextStyle(
-                    color: secondaryTextColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.normal,
-                  ),
-                  border: InputBorder.none,
-                  isDense: true,
-                ),
-                onChanged: (text) =>
-                    onSearchTextChanged(text, forOrigin: false),
-                onSubmitted: (text) => fetchLocationSuggestions(text),
-              ),
-            ),
-            InkWell(
-              onTap: () {
-                if (searchSuggestions.isNotEmpty) {
-                  selectSearchResult(searchSuggestions.first);
-                } else if (destPoint != null) {
-                  calculateRoute(
-                    from: originPoint ?? currentPosition,
-                    to: destPoint,
-                  );
-                } else {
-                  fetchLocationSuggestions(destController.text);
-                }
-              },
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: primaryColor,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: isLoadingRoute
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.directions_rounded,
-                            color: Colors.white,
-                            size: 16,
-                          ),
-                          SizedBox(width: 4),
-                          Text(
-                            'Tìm đường',
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: startController,
                             style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
+                              color: textColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: 'Điểm đi (Mặc định: Vị trí của bạn)',
+                              hintStyle: TextStyle(
+                                color: secondaryTextColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.normal,
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            onChanged: (text) =>
+                                onSearchTextChanged(text, forOrigin: true),
+                            onSubmitted: (text) =>
+                                fetchLocationSuggestions(text),
+                          ),
+                        ),
+                        if (startController.text.isNotEmpty &&
+                            startController.text != "Vị trí của bạn")
+                          GestureDetector(
+                            onTap: () {
+                              startController.clear();
+                              setState(() {
+                                originPoint = null;
+                                originName = "";
+                                searchSuggestions.clear();
+                              });
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.cancel_rounded,
+                                size: 16,
+                                color: secondaryTextColor,
+                              ),
                             ),
                           ),
-                        ],
-                      ),
+                        InkWell(
+                          onTap: () {
+                            if (currentPosition != null) {
+                              setState(() {
+                                originPoint = currentPosition;
+                                originName = "Vị trí của bạn";
+                                startController.text = originName;
+                                searchSuggestions.clear();
+                              });
+                              _showToast('Đã chọn điểm đi là Vị trí hiện tại');
+                              if (destPoint != null) {
+                                calculateRoute(from: originPoint, to: destPoint);
+                              }
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(8),
+                          child: Padding(
+                            padding: const EdgeInsets.all(4.0),
+                            child: Icon(
+                              Icons.my_location_rounded,
+                              size: 16,
+                              color: (originPoint == currentPosition ||
+                                      originPoint == null)
+                                  ? primaryColor
+                                  : secondaryTextColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 8),
+
+                  // 2. Destination Input Field
+                  Container(
+                    height: 38,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    decoration: BoxDecoration(
+                      color: inputBg,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: inputBorder),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: destController,
+                            style: TextStyle(
+                              color: textColor,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                            decoration: InputDecoration(
+                              hintText: 'Nhập điểm đến...',
+                              hintStyle: TextStyle(
+                                color: secondaryTextColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.normal,
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                            onChanged: (text) =>
+                                onSearchTextChanged(text, forOrigin: false),
+                            onSubmitted: (text) =>
+                                fetchLocationSuggestions(text),
+                          ),
+                        ),
+                        if (isSearchingSuggestions)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 6),
+                            child: SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        else if (destController.text.isNotEmpty)
+                          GestureDetector(
+                            onTap: () {
+                              destController.clear();
+                              setState(() => searchSuggestions.clear());
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.all(4.0),
+                              child: Icon(
+                                Icons.cancel_rounded,
+                                size: 16,
+                                color: secondaryTextColor,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
+            ),
+            const SizedBox(width: 8),
+
+            // Right side buttons: Swap & Search/Go button
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Swap button
+                InkWell(
+                  onTap: swapOriginAndDestination,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: inputBg,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: inputBorder),
+                    ),
+                    child: Icon(
+                      Icons.swap_vert_rounded,
+                      size: 20,
+                      color: primaryColor,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Find route action button
+                InkWell(
+                  onTap: () {
+                    if (searchSuggestions.isNotEmpty) {
+                      selectSearchResult(searchSuggestions.first);
+                    } else if (destPoint != null) {
+                      calculateRoute(
+                        from: originPoint ?? currentPosition,
+                        to: destPoint,
+                      );
+                    } else {
+                      fetchLocationSuggestions(destController.text);
+                    }
+                  },
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      color: primaryColor,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: primaryColor.withValues(alpha: 0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: isLoadingRoute
+                        ? const Center(
+                            child: SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                          )
+                        : const Icon(
+                            Icons.directions_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
