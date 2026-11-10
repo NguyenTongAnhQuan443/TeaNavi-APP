@@ -455,12 +455,18 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
     List<SearchResultPlace> results = [];
 
-    // 1. Thử truy vấn qua Photon API với tọa độ neo Việt Nam
+    // 1. Thử truy vấn qua Photon API với tọa độ neo Việt Nam (Có User-Agent hợp lệ)
     try {
       final searchUrl = Uri.parse(
         'https://photon.komoot.io/api/?q=${Uri.encodeComponent(query)}&limit=8&lat=${anchor.latitude}&lon=${anchor.longitude}',
       );
-      final res = await http.get(searchUrl).timeout(const Duration(seconds: 4));
+      final res = await http.get(
+        searchUrl,
+        headers: {
+          'User-Agent': 'TeaNaviMapApp/1.0 (contact@teaverse.vn)',
+          'Accept': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 4));
       if (res.statusCode == 200) {
         final data = json.decode(utf8.decode(res.bodyBytes));
         final features = data['features'] as List;
@@ -494,20 +500,26 @@ class _NavigationScreenState extends State<NavigationScreen> {
             ),
           );
         }
+      } else {
+        debugPrint("Photon status: ${res.statusCode}");
       }
     } catch (e) {
       debugPrint("Photon error: $e");
     }
 
-    // 2. Dự phòng: Nếu Photon trả về ít hơn 3 kết quả hoặc lỗi, gọi tiếp Nominatim OpenStreetMap
+    // 2. Dự phòng 1: Nếu Photon ít kết quả, thử truy vấn Nominatim (User-Agent chuẩn email)
     if (results.length < 3) {
       try {
         final nomUrl = Uri.parse(
           'https://nominatim.openstreetmap.org/search?q=${Uri.encodeComponent(query)}&format=json&limit=6&countrycodes=vn',
         );
-        final nomRes = await http
-            .get(nomUrl, headers: {'User-Agent': 'TeaNaviMapApp/1.0'})
-            .timeout(const Duration(seconds: 4));
+        final nomRes = await http.get(
+          nomUrl,
+          headers: {
+            'User-Agent': 'TeaNaviApp/1.0 (contact@teaverse.vn)',
+            'Accept-Language': 'vi,en;q=0.9',
+          },
+        ).timeout(const Duration(seconds: 4));
 
         if (nomRes.statusCode == 200) {
           final nomData = json.decode(utf8.decode(nomRes.bodyBytes)) as List;
@@ -518,7 +530,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
             double lon = double.tryParse(item['lon'].toString()) ?? 0;
 
             if (lat != 0 && lon != 0) {
-              // Tránh trùng lặp
               bool exists = results.any(
                 (r) =>
                     (r.location.latitude - lat).abs() < 0.001 &&
@@ -538,6 +549,44 @@ class _NavigationScreenState extends State<NavigationScreen> {
         }
       } catch (e) {
         debugPrint("Nominatim error: $e");
+      }
+    }
+
+    // 3. Dự phòng 2: Thử tìm kiếm với từ khóa không dấu nếu kết quả ít
+    if (results.isEmpty) {
+      final asciiQuery = removeDiacritics(query);
+      if (asciiQuery != query) {
+        try {
+          final photonAsciiUrl = Uri.parse(
+            'https://photon.komoot.io/api/?q=${Uri.encodeComponent(asciiQuery)}&limit=6&lat=${anchor.latitude}&lon=${anchor.longitude}',
+          );
+          final res = await http.get(
+            photonAsciiUrl,
+            headers: {'User-Agent': 'TeaNaviMapApp/1.0 (contact@teaverse.vn)'},
+          ).timeout(const Duration(seconds: 4));
+          if (res.statusCode == 200) {
+            final data = json.decode(utf8.decode(res.bodyBytes));
+            final features = data['features'] as List;
+            for (var f in features) {
+              final props = f['properties'] as Map<String, dynamic>;
+              final geom = f['geometry']['coordinates'] as List;
+              final name = props['name'] ?? asciiQuery;
+              List<String> subParts = [];
+              if (props['street'] != null) subParts.add(props['street']);
+              if (props['city'] != null) subParts.add(props['city']);
+              results.add(
+                SearchResultPlace(
+                  title: name,
+                  subtitle: subParts.join(', '),
+                  location: LatLng(
+                    (geom[1] as num).toDouble(),
+                    (geom[0] as num).toDouble(),
+                  ),
+                ),
+              );
+            }
+          }
+        } catch (_) {}
       }
     }
 
