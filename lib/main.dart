@@ -139,8 +139,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool isSelectingOrigin = false;
   bool isRouteStepsExpanded =
       false; // Bật tắt danh sách toàn bộ các ngã rẽ chi tiết
-  bool isCameraAutoFollowing =
-      true; // Tự động xoay và di chuyển camera theo xe khi di chuyển
+  bool isCameraAutoFollowing = true; // Tự động xoay và di chuyển camera theo xe khi di chuyển
 
   // Danh sách gợi ý tìm kiếm (Autocomplete Suggestions)
   List<SearchResultPlace> searchSuggestions = [];
