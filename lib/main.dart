@@ -139,6 +139,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   bool isSelectingOrigin = false;
   bool isRouteStepsExpanded =
       false; // Bật tắt danh sách toàn bộ các ngã rẽ chi tiết
+  bool isCameraAutoFollowing =
+      true; // Tự động xoay và di chuyển camera theo xe khi di chuyển
 
   // Danh sách gợi ý tìm kiếm (Autocomplete Suggestions)
   List<SearchResultPlace> searchSuggestions = [];
@@ -240,13 +242,19 @@ class _NavigationScreenState extends State<NavigationScreen> {
           ),
         ).listen((Position newPos) {
           if (!mounted) return;
+          final newLatLng = LatLng(newPos.latitude, newPos.longitude);
           setState(() {
-            currentPosition = LatLng(newPos.latitude, newPos.longitude);
+            currentPosition = newLatLng;
             currentSpeed = max(0, newPos.speed * 3.6);
             if (newPos.heading > 0) {
               currentHeading = newPos.heading;
             }
           });
+
+          // Tự động di chuyển góc nhìn bản đồ theo xe nếu người dùng đang bật Auto-Follow
+          if (isCameraAutoFollowing) {
+            mapController.move(newLatLng, mapController.camera.zoom);
+          }
 
           if (isNavigating && navSteps.isNotEmpty) {
             processNavigationUpdate();
@@ -958,6 +966,12 @@ class _NavigationScreenState extends State<NavigationScreen> {
             options: MapOptions(
               initialCenter: currentPosition ?? const LatLng(10.8220, 106.6875),
               initialZoom: 15.5,
+              onPositionChanged: (camera, hasGesture) {
+                // Nếu người dùng chủ động vuốt bản đồ, tạm tắt auto follow
+                if (hasGesture && isCameraAutoFollowing) {
+                  setState(() => isCameraAutoFollowing = false);
+                }
+              },
               onTap: (tapPosition, point) {
                 FocusScope.of(context).unfocus();
                 setState(() => searchSuggestions.clear());
@@ -1481,14 +1495,21 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 ),
                 const SizedBox(height: 8),
                 _buildMapControlBtn(
-                  icon: Icons.my_location_rounded,
+                  icon: isCameraAutoFollowing
+                      ? Icons.navigation_rounded
+                      : Icons.my_location_rounded,
                   isDark: isDark,
-                  glassBg: glassBg,
-                  glassBorder: glassBorder,
+                  glassBg: isCameraAutoFollowing
+                      ? primaryColor.withValues(alpha: 0.15)
+                      : glassBg,
+                  glassBorder: isCameraAutoFollowing
+                      ? primaryColor.withValues(alpha: 0.5)
+                      : glassBorder,
                   textColor: primaryColor,
                   onTap: () {
                     if (currentPosition != null) {
-                      mapController.move(currentPosition!, 16);
+                      setState(() => isCameraAutoFollowing = true);
+                      mapController.move(currentPosition!, 16.5);
                     }
                   },
                 ),
